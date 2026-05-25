@@ -2,13 +2,15 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/fallow-rs/fallow/main/assets/logo-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/fallow-rs/fallow/main/assets/logo.svg">
-    <img src="https://raw.githubusercontent.com/fallow-rs/fallow/main/assets/logo.svg" alt="fallow" width="260">
+    <img src="https://raw.githubusercontent.com/fallow-rs/fallow/main/assets/logo.svg" alt="fallow" width="290">
   </picture>
 </p>
 
 <p align="center">
-  <strong>Codebase intelligence for TypeScript and JavaScript.</strong><br>
-  Free static analysis. Optional paid runtime intelligence.
+  <strong>Deterministic codebase intelligence for TypeScript and JavaScript.</strong><br>
+  Quality, risk, architecture, dependencies, duplication, and safe cleanup evidence for humans, CI, and agents.<br>
+  Static analysis is free and open source. Optional runtime intelligence (Fallow Runtime) adds production execution evidence.<br>
+  <strong>Rust-native. Zero config. Sub-second. No AI inside the analyzer.</strong>
 </p>
 
 <p align="center">
@@ -20,13 +22,21 @@
 
 ---
 
-Linters check files. TypeScript checks types. Fallow checks the codebase.
+Fallow turns a JS/TS repository into a trusted quality report: health score, changed-code risk, hotspots, duplication, architecture issues, dependency hygiene, and cleanup opportunities. It helps you answer:
 
-Fallow builds a module graph across your TypeScript and JavaScript project and reports what nothing depends on, what runs in cycles, what's duplicated, what's complex, and (with the optional runtime layer) what actually ran in production. One pipeline, two layers, zero configuration on the free side.
+- What changed?
+- What got riskier?
+- What should I review?
+- What should I refactor?
+- What can be safely removed?
+
+Fallow is built for maintainers, CI pipelines, editors, and AI agents that need structured evidence instead of guesses. No AI inside the analyzer. Fallow produces deterministic findings, typed output contracts, and traceable explanations that downstream tools can trust.
+
+Linters check files. TypeScript checks types. Fallow checks the codebase.
 
 ## Two layers, one decision system
 
-- **Static intelligence (free, MIT).** Unused files, exports, types, dependencies, circular imports, code duplication, complexity hotspots, architecture boundaries, feature-flag usage. Rust-native, sub-second on most projects, 90 framework plugins, JSON / SARIF / CodeClimate / markdown outputs, CI + editor + MCP integrations.
+- **Static intelligence (free, MIT).** Unused files, exports, types, dependencies, circular imports, code duplication, complexity hotspots, architecture boundaries, feature-flag usage. Rust-native, sub-second on most projects, 100 framework plugins, JSON / SARIF / CodeClimate / markdown outputs, CI + editor + MCP integrations.
 - **Runtime intelligence (paid, Fallow Runtime).** Production execution evidence merged into the same `fallow health` report. Hot paths, cold paths, runtime-backed deletion confidence, runtime-weighted health, stale-flag evidence, trends, alerts, and shared team workflows.
 
 Static analysis is free and open source. Runtime intelligence is the paid team layer.
@@ -34,7 +44,9 @@ Static analysis is free and open source. Runtime intelligence is the paid team l
 ## Start here
 
 ```bash
-npx fallow
+npx fallow audit       # Changed-code risk gate for PRs
+npx fallow             # Full codebase analysis: cleanup + duplication + health
+npx fallow health      # Quality score, hotspots, refactor targets
 ```
 
 - [Documentation](https://docs.fallow.tools)
@@ -50,6 +62,10 @@ npx fallow
 | [fallow-skills](https://github.com/fallow-rs/fallow-skills) | Agent Skills pack for Claude Code, Cursor, Codex, Gemini CLI, Copilot, Windsurf, Amp, and 30+ more. |
 | [fallow-cov-protocol](https://github.com/fallow-rs/fallow-cov-protocol) | Wire contract between the fallow CLI and Fallow Runtime's production-coverage sidecar. |
 | [oxc-coverage-instrument](https://github.com/fallow-rs/oxc-coverage-instrument) | Istanbul-compatible coverage instrumentation on the Oxc AST. Powers browser coverage collection. |
+
+## Built for agents
+
+Fallow gives AI agents structured repo truth instead of forcing them to infer everything from grep. Every issue in `--format json` carries a machine-actionable `actions` array with an `auto_fixable` flag, so agents can self-correct before opening a PR. MCP server, LSP, and a version-matched Agent Skill ship in the npm package for Claude Code, Codex, Cursor, Windsurf, and other agents.
 
 ## Outcomes
 
