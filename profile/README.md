@@ -7,10 +7,10 @@
 </p>
 
 <p align="center">
-  <strong>Deterministic codebase intelligence for TypeScript and JavaScript.</strong><br>
-  Quality, risk, architecture, dependencies, duplication, and safe cleanup evidence for humans, CI, and agents.<br>
-  Static analysis is free and open source. Optional runtime intelligence (Fallow Runtime) adds production execution evidence.<br>
-  <strong>Rust-native. Zero config. Sub-second. No AI inside the analyzer.</strong>
+  <strong>Codebase intelligence for TypeScript and JavaScript.</strong><br>
+  Quality, risk, architecture, dependencies, duplication, and design-system drift, for humans, CI, and the agents writing your code.<br>
+  Free static analysis of code and styles. Optional runtime intelligence (Fallow Runtime) adds production execution evidence.<br>
+  <sub>Rust-native · zero-config · sub-second · no AI inside the analyzer</sub>
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 
 ---
 
-Fallow turns a JS/TS repository into a trusted quality report: health score, changed-code risk, hotspots, duplication, architecture issues, dependency hygiene, and cleanup opportunities. It helps you answer:
+Fallow turns a JS/TS repository into a trusted quality report: health score, changed-code risk, hotspots, duplication, architecture issues, dependency hygiene, styling consistency, and cleanup opportunities. It helps you answer:
 
 - What changed?
 - What got riskier?
@@ -36,7 +36,7 @@ Linters check files. TypeScript checks types. Fallow checks the codebase.
 
 ## Two layers, one decision system
 
-- **Static intelligence (free, MIT).** Unused files, exports, types, dependencies, circular imports, code duplication, complexity hotspots, architecture boundaries, feature-flag usage. Rust-native, sub-second on most projects, 100 framework plugins, JSON / SARIF / CodeClimate / markdown outputs, CI + editor + MCP integrations.
+- **Static intelligence (free, MIT).** Unused files, exports, types, dependencies, circular imports, code duplication, complexity hotspots, architecture boundaries, design-system drift, feature-flag usage. Broad framework support, JSON / SARIF / CodeClimate / markdown outputs, CI + editor + MCP integrations.
 - **Runtime intelligence (paid, Fallow Runtime).** Production execution evidence merged into the same `fallow health` report. Hot paths, cold paths, runtime-backed deletion confidence, runtime-weighted health, stale-flag evidence, trends, alerts, and shared team workflows.
 
 Static analysis is free and open source. Runtime intelligence is the paid team layer.
@@ -57,7 +57,7 @@ npx fallow health      # Quality score, hotspots, refactor targets
 
 | Repo | What it is |
 |---|---|
-| [fallow](https://github.com/fallow-rs/fallow) | The CLI, LSP, MCP server, GitHub Action, and VS Code extension. Rust-native, MIT. |
+| [fallow](https://github.com/fallow-rs/fallow) | The CLI, LSP, MCP server, GitHub Action, and VS Code extension. MIT. |
 | [docs](https://github.com/fallow-rs/docs) | docs.fallow.tools (Mintlify). |
 | [fallow-skills](https://github.com/fallow-rs/fallow-skills) | Agent Skills pack for Claude Code, Cursor, Codex, Gemini CLI, Copilot, Windsurf, Amp, and 30+ more. |
 | [fallow-cov-protocol](https://github.com/fallow-rs/fallow-cov-protocol) | Wire contract between the fallow CLI and Fallow Runtime's production-coverage sidecar. |
