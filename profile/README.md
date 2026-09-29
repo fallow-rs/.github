@@ -52,4 +52,4 @@ Everything above is MIT licensed. Production runtime coverage is an optional pai
 
 ## Contributing and support
 
-Issues and pull requests are welcome in every repository. Start with the [fallow issue tracker](https://github.com/fallow-rs/fallow/issues) or the [discussions](https://github.com/fallow-rs/fallow/discussions). To support the project, see [GitHub Sponsors](https://github.com/sponsors/BartWaardenburg).
+Issues and pull requests are welcome in every repository. Start with the [fallow issue tracker](https://github.com/fallow-rs/fallow/issues) or the [discussions](https://github.com/fallow-rs/fallow/discussions). To support the project, see [GitHub Sponsors](https://github.com/sponsors/fallow-rs).
