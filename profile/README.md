@@ -8,9 +8,7 @@
 
 <p align="center">
   <strong>Codebase intelligence for TypeScript and JavaScript.</strong><br>
-  Quality, risk, architecture, dependencies, duplication, and design-system drift, for humans, CI, and the agents writing your code.<br>
-  Free static analysis of code and styles. Optional runtime intelligence (Fallow Runtime) adds production execution evidence.<br>
-  <sub>Rust-native · zero-config · sub-second · no AI inside the analyzer</sub>
+  Health, complexity, duplication, architecture, styling, and unused code, from one graph of your repository.
 </p>
 
 <p align="center">
@@ -22,58 +20,36 @@
 
 ---
 
-Fallow turns a JS/TS repository into a trusted quality report: health score, changed-code risk, hotspots, duplication, architecture issues, dependency hygiene, styling consistency, and cleanup opportunities. It helps you answer:
+fallow reads a whole TypeScript or JavaScript repository as one graph. From that graph it answers the questions that a team asks about its code:
 
-- What changed?
-- What got riskier?
-- What should I review?
-- What should I refactor?
-- What can be safely removed?
+- Is this change safe to merge?
+- Where is the code hard to change?
+- Does the architecture hold?
+- What is copied?
+- Does the UI follow the design system?
+- What does nothing use?
 
-Fallow is built for maintainers, CI pipelines, editors, and AI agents that need structured evidence instead of guesses. No AI inside the analyzer. Fallow produces deterministic findings, typed output contracts, and traceable explanations that downstream tools can trust.
-
-Linters check files. TypeScript checks types. Fallow checks the codebase.
-
-## Two layers, one decision system
-
-- **Static intelligence (free, MIT).** Unused files, exports, types, dependencies, circular imports, code duplication, complexity hotspots, architecture boundaries, design-system drift, feature-flag usage. Broad framework support, JSON / SARIF / CodeClimate / markdown outputs, CI + editor + MCP integrations.
-- **Runtime intelligence (paid, Fallow Runtime).** Production execution evidence merged into the same `fallow health` report. Hot paths, cold paths, runtime-backed deletion confidence, runtime-weighted health, stale-flag evidence, trends, alerts, and shared team workflows.
-
-Static analysis is free and open source. Runtime intelligence is the paid team layer.
-
-## Start here
+The analyzer is deterministic and written in Rust. There is no AI inside it. The same input gives the same findings, with typed JSON output that CI, editors, and coding agents can use.
 
 ```bash
-npx fallow audit       # Changed-code risk gate for PRs
-npx fallow             # Full codebase analysis: cleanup + duplication + health
-npx fallow health      # Quality score, hotspots, refactor targets
+npx fallow            # health, duplication, and unused code in one run
+npx fallow audit      # the findings that a pull request introduces
+npx fallow health     # health score, hotspots, and refactoring targets
 ```
-
-- [Documentation](https://docs.fallow.tools)
-- [Static vs runtime intelligence](https://docs.fallow.tools/explanations/static-vs-runtime)
-- [Website](https://fallow.tools)
 
 ## Repositories
 
-| Repo | What it is |
+| Repository | What it is |
 |---|---|
-| [fallow](https://github.com/fallow-rs/fallow) | The CLI, LSP, MCP server, GitHub Action, and VS Code extension. MIT. |
-| [docs](https://github.com/fallow-rs/docs) | docs.fallow.tools (Mintlify). |
-| [fallow-skills](https://github.com/fallow-rs/fallow-skills) | Agent Skills pack for Claude Code, Cursor, Codex, Gemini CLI, Copilot, Windsurf, Amp, and 30+ more. |
-| [fallow-cov-protocol](https://github.com/fallow-rs/fallow-cov-protocol) | Wire contract between the fallow CLI and Fallow Runtime's production-coverage sidecar. |
-| [oxc-coverage-instrument](https://github.com/fallow-rs/oxc-coverage-instrument) | Istanbul-compatible coverage instrumentation on the Oxc AST. Powers browser coverage collection. |
+| [fallow](https://github.com/fallow-rs/fallow) | The CLI, the GitHub Action, the GitLab template, the LSP and MCP servers, and the VS Code extension |
+| [docs](https://github.com/fallow-rs/docs) | The source of [docs.fallow.tools](https://docs.fallow.tools) |
+| [fallow-skills](https://github.com/fallow-rs/fallow-skills) | Agent skills for Claude Code, Codex, Cursor, and other coding agents |
+| [srcmap](https://github.com/fallow-rs/srcmap) | A source map SDK for Rust tooling |
+| [oxc-coverage-instrument](https://github.com/fallow-rs/oxc-coverage-instrument) | Istanbul-compatible coverage instrumentation on the Oxc AST |
+| [fallow-cov-protocol](https://github.com/fallow-rs/fallow-cov-protocol) | The JSON contract between the CLI and the production-coverage sidecar |
 
-## Built for agents
+Everything above is MIT licensed. Production runtime coverage is an optional paid add-on, Fallow Cloud.
 
-Fallow gives AI agents structured repo truth instead of forcing them to infer everything from grep. Every issue in `--format json` carries a machine-actionable `actions` array with an `auto_fixable` flag, so agents can self-correct before opening a PR. MCP server, LSP, and a version-matched Agent Skill ship in the npm package for Claude Code, Codex, Cursor, Windsurf, and other agents.
+## Contributing and support
 
-## Outcomes
-
-- **Delete cold code** with runtime-backed confidence, not guesses.
-- **Review hot-path changes** with evidence, not reviewer instinct.
-- **Prioritize refactors** by traffic and complexity together.
-- **Retire stale flags** from what ran in practice, not what's written.
-
-## Contributing
-
-Issues and PRs welcome across every repo in the org. Start with the [main `fallow` issue tracker](https://github.com/fallow-rs/fallow/issues) or check [discussions](https://github.com/fallow-rs/fallow/discussions).
+Issues and pull requests are welcome in every repository. Start with the [fallow issue tracker](https://github.com/fallow-rs/fallow/issues) or the [discussions](https://github.com/fallow-rs/fallow/discussions). To support the project, see [GitHub Sponsors](https://github.com/sponsors/BartWaardenburg).
