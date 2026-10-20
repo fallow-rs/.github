@@ -1,16 +1,17 @@
-// Checks the repair commit before the reusable dependabot.yml workflow pushes it. The commit
-// comes from a runner that installed and built third-party code, so it is
-// untrusted.
+// Checks the repair commit before the reusable dependabot.yml workflow pushes
+// it. The commit comes from a runner that installed and built third-party
+// code, so it is untrusted.
 //
 // A commit is rejected when it is more than one commit, changes `.github/`,
 // the changelog or git metadata files, adds a binary file, a symbolic link or
 // a submodule, or changes more than MAX_CHANGED_LINES hand-written lines.
 //
-// An accepted commit may merge without review only when every path is a
-// lockfile, a generated artifact or a snapshot, and every URL that the commit
-// adds to a lockfile names the official registry in its exact form. Any other change can
-// alter what a build, a release or a policy test runs, so a maintainer
-// reviews it.
+// An accepted commit is pushed and may merge without review (`merge=auto`)
+// only when every path is a snapshot or a generated file of the repository.
+// Any other change (`merge=review`) is not pushed: a push from the App starts
+// the pull request CI with the repository secrets, so a maintainer reviews the
+// patch first. A lockfile change is in that group, because a lockfile can name
+// a different package that is still on the registry.
 //
 // The CLI compares HEAD with BEFORE in the current repository and prints each
 // problem. It writes `merge=auto` or `merge=review` to GITHUB_OUTPUT when that
@@ -41,39 +42,26 @@ const NO_MATCH = /(?!)/u;
 const SNAPSHOT_PATH = /\.snap$/u;
 const LOCKFILE_PATH =
   /(?:^|\/)(?:Cargo\.lock|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lock)$/u;
-// A lockfile line that names where a package comes from. The match is wide on
-// purpose: any scheme, any case, and the specifiers that npm, pnpm and Cargo
-// accept for a source outside the registry.
-const SOURCE_HINT =
-  /:\/\/|\b(?:resolved|tarball|source|repo)\b|\b(?:git|file|link|github|directory|path|workspace|npm)[+:]/iu;
-// The only source lines that keep auto-merge.
-const REGISTRY_SOURCE_LINE = [
-  /^\s*"resolved": "https:\/\/registry\.npmjs\.org\/[^"\s]+\.tgz",?$/u,
-  /^source = "registry\+https:\/\/github\.com\/rust-lang\/crates\.io-index"$/u,
-  /^\s*resolved "https:\/\/registry\.(?:yarnpkg\.com|npmjs\.org)\/[^"\s]+"$/u,
-  // npm copies the `funding` metadata of a package. npm never fetches it.
-  /^\s*"(?:url|funding)": "https:\/\/[^"\s]+",?$/u,
-];
-
 /**
  * Checks a repair commit.
  * @param {{
  *   commits: number,
  *   files: { path: string, added: number | null, deleted: number | null, mode: string }[],
- *   lockfileLines?: string[],
  * }} input
  * @param {{ generated?: RegExp, reviewGenerated?: RegExp }} [options] Paths that a
  *   generator writes. `generated` paths may auto-merge; `reviewGenerated`
  *   paths, such as public contracts, need review. Neither counts toward the
- *   size limit. Lockfiles and snapshots are always generated.
+ *   size limit. Snapshots are always generated. Lockfiles do not count toward
+ *   the size limit, but need review.
  * @returns {{ ok: boolean, problems: string[], merge: "auto" | "review" }}
  */
 export const checkRepair = (
-  { commits, files, lockfileLines = [] },
+  { commits, files },
   { generated = NO_MATCH, reviewGenerated = NO_MATCH } = {},
 ) => {
-  const isGenerated = (path) =>
-    LOCKFILE_PATH.test(path) || SNAPSHOT_PATH.test(path) || generated.test(path);
+  const isGenerated = (path) => SNAPSHOT_PATH.test(path) || generated.test(path);
+  const isSizeExempt = (path) =>
+    isGenerated(path) || LOCKFILE_PATH.test(path) || reviewGenerated.test(path);
   const problems = [];
   if (commits !== 1) problems.push(`the patch has ${commits} commits, not 1`);
   for (const { path, added, mode } of files) {
@@ -85,15 +73,12 @@ export const checkRepair = (
     else if (added === null) problems.push(`${path} is a binary file`);
   }
   const changed = files
-    .filter(
-      ({ path, added }) => added !== null && !isGenerated(path) && !reviewGenerated.test(path),
-    )
+    .filter(({ path, added }) => added !== null && !isSizeExempt(path))
     .reduce((sum, { added, deleted }) => sum + added + deleted, 0);
   if (changed > MAX_CHANGED_LINES) {
     problems.push(`${changed} hand-written lines changed, more than ${MAX_CHANGED_LINES}`);
   }
-  const auto = files.every(({ path }) => isGenerated(path)) && lockfileLines.every(isRegistryLine);
-  const merge = auto ? "auto" : "review";
+  const merge = files.every(({ path }) => isGenerated(path)) ? "auto" : "review";
   return { ok: problems.length === 0, problems, merge };
 };
 
@@ -133,32 +118,6 @@ export const parseRawModes = (output) => {
   return modes;
 };
 
-/**
- * Tells if an added lockfile line keeps auto-merge: it names no source, or it
- * names the npm or crates.io registry in its exact form.
- * @param {string} line
- * @returns {boolean}
- */
-export const isRegistryLine = (line) =>
-  !SOURCE_HINT.test(line) || REGISTRY_SOURCE_LINE.some((pattern) => pattern.test(line));
-
-/**
- * Lists the lines that a unified diff adds. A `+++` line counts as a file
- * header only before the first hunk of its file.
- * @param {string} diff
- * @returns {string[]}
- */
-export const addedLines = (diff) => {
-  const added = [];
-  let inHunk = false;
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("diff --git ")) inHunk = false;
-    else if (line.startsWith("@@")) inHunk = true;
-    else if (inHunk && line.startsWith("+")) added.push(line.slice(1));
-  }
-  return added;
-};
-
 const main = () => {
   const before = process.env.BEFORE;
   if (!before) throw new Error("missing environment: BEFORE");
@@ -167,26 +126,9 @@ const main = () => {
   const files = parseNumstat(git("diff", "--numstat", "-z", "--no-renames", before, "HEAD")).map(
     (file) => ({ ...file, mode: modes.get(file.path) ?? "" }),
   );
-  const lockfiles = files.map(({ path }) => path).filter((path) => LOCKFILE_PATH.test(path));
-  // Literal pathspecs, so a path with `*`, `:` or `[` names only itself.
-  const lockfileLines =
-    lockfiles.length === 0
-      ? []
-      : addedLines(
-          git(
-            "--literal-pathspecs",
-            "diff",
-            "--unified=0",
-            "--no-renames",
-            before,
-            "HEAD",
-            "--",
-            ...lockfiles,
-          ),
-        );
   const optional = (source) => (source ? new RegExp(source, "u") : NO_MATCH);
   const result = checkRepair(
-    { commits, files, lockfileLines },
+    { commits, files },
     {
       generated: optional(process.env.GENERATED_PATHS),
       reviewGenerated: optional(process.env.REVIEW_GENERATED_PATHS),

@@ -11,7 +11,7 @@ maintainer in most cases.
 | A pull request workflow succeeds | Merge | Merges the pull request when every check on the head commit passed, the update is a minor or patch update, and no `needs-review` or `needs-human` label is set. |
 | The caller's schedule | Sweep | Checks every open Dependabot pull request the same way. This catches a pull request whose last check came from an app. |
 | A pull request workflow fails | Triage | Reruns cancelled or flaky jobs, asks for a repair, or labels the pull request `needs-human` after two failed repairs. |
-| Triage asks for a repair | Repair, Publish | Claude makes one commit. The guard checks it, and the fallow-dependabot App pushes it. A repair of lockfiles, generated files or snapshots merges when the checks pass. Any other repair gets the `needs-review` label. |
+| Triage asks for a repair | Repair, Publish | Claude makes one commit, and the guard checks it. A repair of generated files or snapshots is pushed by the fallow-dependabot App and merges when the checks pass. Any other repair, lockfiles included, is not pushed: the pull request gets the `needs-review` label and a comment with the patch and the command to apply it. |
 
 The merge does not depend on branch protection, so it also works in a
 repository without required checks. Major updates always wait for a
@@ -96,8 +96,10 @@ installed on every repository that calls the workflow.
   rejects changes under `.github/`, to the changelog and to git metadata
   files, binary files, symbolic links, submodules and more than 300
   hand-written lines. The push token can write contents only.
-- Only a repair of lockfiles, generated files or snapshots merges without
-  review, and a lockfile change must keep every new source on the official
+- Only a repair of generated files or snapshots is pushed without review. A
+  push from the App starts the pull request CI with the repository secrets,
+  so any other repair waits for a maintainer. A lockfile change also waits,
+  because a lockfile can name a different package that is still on the
   registry.
 
 ## Development
