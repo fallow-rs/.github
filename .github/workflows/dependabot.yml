@@ -291,6 +291,9 @@ jobs:
     permissions:
       actions: read
       contents: read
+      # The triage step lists the pull requests of the branch. A private
+      # repository needs this permission for that.
+      pull-requests: read
     outputs:
       action: ${{ steps.triage.outputs.action }}
       pr: ${{ steps.triage.outputs.pr }}
