@@ -561,6 +561,7 @@ jobs:
           CHECK: ${{ steps.check.outputs.result }}
           RESULT: ${{ steps.push.outputs.result }}
           MODE: ${{ steps.mode.outputs.mode }}
+          PATCH_LIMIT: '30000'
         run: |
           set -euo pipefail
           comment="$RUNNER_TEMP/comment.md"
@@ -568,7 +569,7 @@ jobs:
           fence=$(printf '\140%.0s' 1 2 3 4 5 6)
           fenced() {
             printf '\n%stext\n' "$fence"
-            head -c 30000 "$1" | sed "s/$fence/[fence]/g"
+            head -c "$PATCH_LIMIT" "$1" | sed "s/$fence/[fence]/g"
             printf '\n%s\n' "$fence"
           }
           label=needs-human
@@ -578,15 +579,27 @@ jobs:
               echo "The repair workflow pushed a commit that changes only generated files. The pull request merges when every check passes." > "$comment" ;;
             accepted/review/*)
               label=""
+              patch="$RUNNER_TEMP/repair/repair.patch"
+              sum=$(sha256sum "$patch" | cut -d' ' -f1)
+              size=$(wc -c < "$patch")
               {
-                echo "The repair workflow made a commit that changes code, so it did not push it. Review the patch below. To apply it, run this in a checkout of the pull request branch:"
+                echo "The repair workflow made a commit that changes code, so it did not push it. Review the full patch, then apply it in a checkout of the pull request branch. The command checks that the patch is the one listed here:"
                 printf '\n%sbash\n' "$fence"
                 printf 'gh run download %s --repo %s --name dependabot-repair --dir /tmp/dependabot-repair\n' "$GITHUB_RUN_ID" "$GITHUB_REPOSITORY"
+                printf 'echo "%s  /tmp/dependabot-repair/repair.patch" | sha256sum -c -\n' "$sum"
                 echo "git am /tmp/dependabot-repair/repair.patch && git push"
                 printf '%s\n' "$fence"
                 echo
+                echo "Changed files:"
+                git diff --stat=200 "$BEFORE" HEAD > "$RUNNER_TEMP/stat.txt"
+                fenced "$RUNNER_TEMP/stat.txt"
+                if [ "$size" -gt "$PATCH_LIMIT" ]; then
+                  echo
+                  echo "The patch has $size bytes. This comment shows the first $PATCH_LIMIT bytes only. Read the full patch from the run artifacts before you apply it."
+                fi
+                echo
                 echo "Patch:"
-                fenced "$RUNNER_TEMP/repair/repair.patch"
+                fenced "$patch"
               } > "$comment" ;;
             accepted/auto/*)
               echo "The repair workflow could not push the commit. The patch is in the run artifacts." > "$comment" ;;
