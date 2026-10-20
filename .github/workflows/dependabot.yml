@@ -70,6 +70,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      # merge.mjs lists the Actions runs of the head commit. A private
+      # repository needs this permission for that.
+      actions: read
       checks: read
       contents: read
       pull-requests: read
@@ -141,6 +144,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      # merge.mjs lists the Actions runs of the head commit. A private
+      # repository needs this permission for that.
+      actions: read
       checks: read
       contents: read
       pull-requests: read
