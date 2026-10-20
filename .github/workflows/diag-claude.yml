@@ -1,0 +1,28 @@
+name: Diagnose Claude API key
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1'
+    steps:
+      - name: Key shape
+        env:
+          K: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: echo "length=${#K} prefix=${K:0:10}"
+      - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          show_full_output: true
+          prompt: Reply with the single word OK.
+          claude_args: --model claude-sonnet-5-5 --max-turns 1
