@@ -14,10 +14,9 @@ jobs:
     env:
       CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1'
     steps:
-      - name: Key shape
-        env:
-          K: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: echo "length=${#K} prefix=${K:0:10}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install subprocess isolation
         run: |
           sudo apt-get update -qq
