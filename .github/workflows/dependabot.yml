@@ -504,12 +504,11 @@ jobs:
           permission-pull-requests: write
           permission-workflows: write
 
-      # A repair of lockfiles, generated files or snapshots merges like the
-      # update itself: the merge job merges it when every check passes. Any
-      # other repair can change what a build, a release or a test runs, so the
-      # pull request gets the needs-review label, which the merge job respects.
-      # GitHub auto-merge would ignore that label, so it is turned off and
-      # checked before the push.
+      # A repair of generated files or snapshots is pushed and merges like the
+      # update itself. Any other repair is not pushed: a push from the App
+      # starts the pull request CI with the repository secrets, so a
+      # maintainer reviews the patch first. GitHub auto-merge would ignore the
+      # needs-review label, so it is turned off.
       - id: mode
         if: steps.check.outputs.result == 'accepted'
         env:
@@ -526,11 +525,6 @@ jobs:
             exit 0
           fi
           gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --disable-auto 2>/dev/null || true
-          armed=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json autoMergeRequest --jq '.autoMergeRequest != null')
-          if [ "$armed" != false ]; then
-            echo "mode=disable-failed" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           gh label create needs-review --repo "$GITHUB_REPOSITORY" --color FBCA04 \
             --description "A maintainer must review this pull request" 2>/dev/null || true
           gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label needs-review
@@ -539,7 +533,7 @@ jobs:
       # The push token can write contents only, so a guard bug cannot push a
       # workflow file.
       - id: push-token
-        if: steps.mode.outputs.mode == 'auto' || steps.mode.outputs.mode == 'review'
+        if: steps.mode.outputs.mode == 'auto'
         continue-on-error: true
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
@@ -567,6 +561,7 @@ jobs:
           CHECK: ${{ steps.check.outputs.result }}
           RESULT: ${{ steps.push.outputs.result }}
           MODE: ${{ steps.mode.outputs.mode }}
+          PATCH_LIMIT: '30000'
         run: |
           set -euo pipefail
           comment="$RUNNER_TEMP/comment.md"
@@ -574,21 +569,40 @@ jobs:
           fence=$(printf '\140%.0s' 1 2 3 4 5 6)
           fenced() {
             printf '\n%stext\n' "$fence"
-            head -c 4000 "$1" | sed "s/$fence/[fence]/g"
+            head -c "$PATCH_LIMIT" "$1" | sed "s/$fence/[fence]/g"
             printf '\n%s\n' "$fence"
           }
           label=needs-human
           case "$CHECK/$MODE/$RESULT" in
             accepted/auto/pushed)
               label=""
-              echo "The repair workflow pushed a commit. The pull request merges when every check passes." > "$comment" ;;
-            accepted/review/pushed)
+              echo "The repair workflow pushed a commit that changes only generated files. The pull request merges when every check passes." > "$comment" ;;
+            accepted/review/*)
               label=""
-              echo "The repair workflow pushed a commit that changes code. Review it, then merge." > "$comment" ;;
-            accepted/auto/*|accepted/review/*)
+              patch="$RUNNER_TEMP/repair/repair.patch"
+              sum=$(sha256sum "$patch" | cut -d' ' -f1)
+              size=$(wc -c < "$patch")
+              {
+                echo "The repair workflow made a commit that changes code, so it did not push it. Review the full patch, then apply it in a checkout of the pull request branch. The command checks that the patch is the one listed here:"
+                printf '\n%sbash\n' "$fence"
+                printf 'gh run download %s --repo %s --name dependabot-repair --dir /tmp/dependabot-repair\n' "$GITHUB_RUN_ID" "$GITHUB_REPOSITORY"
+                printf 'echo "%s  /tmp/dependabot-repair/repair.patch" | sha256sum -c -\n' "$sum"
+                echo "git am /tmp/dependabot-repair/repair.patch && git push"
+                printf '%s\n' "$fence"
+                echo
+                echo "Changed files:"
+                git diff --stat=200 "$BEFORE" HEAD > "$RUNNER_TEMP/stat.txt"
+                fenced "$RUNNER_TEMP/stat.txt"
+                if [ "$size" -gt "$PATCH_LIMIT" ]; then
+                  echo
+                  echo "The patch has $size bytes. This comment shows the first $PATCH_LIMIT bytes only. Read the full patch from the run artifacts before you apply it."
+                fi
+                echo
+                echo "Patch:"
+                fenced "$patch"
+              } > "$comment" ;;
+            accepted/auto/*)
               echo "The repair workflow could not push the commit. The patch is in the run artifacts." > "$comment" ;;
-            accepted/disable-failed/*)
-              echo "The repair workflow did not push the commit: it could not turn auto-merge off. The patch is in the run artifacts." > "$comment" ;;
             accepted/*)
               echo "The repair workflow did not push the commit: set up the fallow-dependabot GitHub App. The patch is in the run artifacts." > "$comment" ;;
             rejected/*)

@@ -11,13 +11,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import {
-  addedLines,
-  checkRepair,
-  MAX_CHANGED_LINES,
-  parseNumstat,
-  parseRawModes,
-} from "./guard.mjs";
+import { checkRepair, MAX_CHANGED_LINES, parseNumstat, parseRawModes } from "./guard.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./guard.mjs", import.meta.url));
 const file = (path, added = 1, deleted = 1, mode = "100644") => ({ path, added, deleted, mode });
@@ -114,48 +108,15 @@ test("a change to code that a build runs is accepted but needs review", () => {
     assert.equal(result.ok, true, path);
     assert.equal(result.merge, "review", path);
   }
-  const generated = [file("crates/cli/tests/snapshots/a.snap"), file("Cargo.lock")];
-  assert.equal(checkRepair({ commits: 1, files: generated }).merge, "auto");
+  const snapshots = [file("crates/cli/tests/snapshots/a.snap")];
+  assert.equal(checkRepair({ commits: 1, files: snapshots }).merge, "auto");
+  const viz = [file("crates/cli/viz-assets/viz.js")];
+  assert.equal(checkRepair({ commits: 1, files: viz }, FALLOW).merge, "auto");
 });
 
-test("a lockfile source outside the exact registry form needs review", () => {
-  const files = [file("package-lock.json")];
-  const ok = [
-    '      "resolved": "https://registry.npmjs.org/acorn/-/acorn-8.19.0.tgz",',
-    'source = "registry+https://github.com/rust-lang/crates.io-index"',
-    '      "integrity": "sha512-abc",',
-    'version = "1.2.3"',
-    '        "url": "https://github.com/sponsors/x"',
-  ];
-  assert.equal(checkRepair({ commits: 1, files, lockfileLines: ok }).merge, "auto");
-  for (const line of [
-    '      "resolved": "https://evil.example/acorn.tgz",',
-    '      "resolved": "git+ssh://git@github.com/x/y.git#abc",',
-    '      "resolved": "HTTPS://registry.npmjs.org/a/-/a-1.0.0.tgz",',
-    '      "resolved": "file:../vendor/a.tgz",',
-    "    version: link:../a",
-    "    resolution: {tarball: https://registry.npmjs.org/a/-/a-1.0.0.tgz}",
-    'source = "git+https://github.com/x/y?rev=abc#abc"',
-    '"a": "github:x/y"',
-  ]) {
-    assert.equal(checkRepair({ commits: 1, files, lockfileLines: [line] }).merge, "review", line);
-  }
-});
-
-test("added lines come from hunks, so an added line that starts with ++ counts", () => {
-  const diff = [
-    "diff --git a/package-lock.json b/package-lock.json",
-    "--- a/package-lock.json",
-    "+++ b/package-lock.json",
-    "@@ -1 +1,2 @@",
-    '-      "resolved": "https://registry.npmjs.org/old.tgz",',
-    '+      "resolved": "https://registry.npmjs.org/new.tgz",',
-    '+++"resolved": "git+ssh://x"',
-  ].join("\n");
-  assert.deepEqual(addedLines(diff), [
-    '      "resolved": "https://registry.npmjs.org/new.tgz",',
-    '++"resolved": "git+ssh://x"',
-  ]);
+test("a lockfile change needs review, because it can name another registry package", () => {
+  const files = [file("crates/cli/tests/snapshots/a.snap"), file("Cargo.lock")];
+  assert.equal(checkRepair({ commits: 1, files }).merge, "review");
 });
 
 test("the raw diff gives the new mode of each path", () => {
@@ -197,7 +158,7 @@ test("the script started as a process checks the patch in a git repository", () 
   assert.match(run.stdout, /CHANGELOG\.md may not change/u);
 });
 
-test("without options only lockfiles and snapshots are generated", () => {
+test("without options lockfiles do not count toward the size limit and snapshots are generated", () => {
   const big = MAX_CHANGED_LINES;
   assert.equal(
     checkRepair({ commits: 1, files: [file("crates/cli/viz-assets/viz.js", big, big)] }).ok,
@@ -207,12 +168,6 @@ test("without options only lockfiles and snapshots are generated", () => {
   assert.deepEqual(checkRepair({ commits: 1, files: lock }), {
     ok: true,
     problems: [],
-    merge: "auto",
+    merge: "review",
   });
-});
-
-test("a yarn registry line keeps auto-merge", () => {
-  const line = '  resolved "https://registry.yarnpkg.com/a/-/a-1.0.0.tgz#abc"';
-  const files = [file("yarn.lock")];
-  assert.equal(checkRepair({ commits: 1, files, lockfileLines: [line] }).merge, "auto");
 });
