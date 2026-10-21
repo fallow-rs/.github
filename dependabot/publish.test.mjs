@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { fileChanges } from "./publish.mjs";
+import { commitMessage, fileChanges } from "./publish.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./publish.mjs", import.meta.url));
 
@@ -154,4 +154,21 @@ test("a refused commit, such as a moved head, fails the step without a rollback"
   assert.equal(result.status, 1);
   assert.match(result.output, /Expected branch to point/u);
   assert.ok(!result.calls.some((call) => call.body?.query?.includes("updateRefs")));
+});
+
+test("the message drops co-author and sign-off trailers, because the App is the author", () => {
+  const message = [
+    "fix: bump emnapi in the WASI manifests",
+    "",
+    "The loader and the runtime mismatched.",
+    "",
+    "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>",
+    "Signed-off-by: claude[bot] <41898282+claude[bot]@users.noreply.github.com>",
+    "",
+  ].join("\n");
+  assert.deepEqual(commitMessage(message), {
+    headline: "fix: bump emnapi in the WASI manifests",
+    body: "The loader and the runtime mismatched.",
+  });
+  assert.deepEqual(commitMessage("chore: one line\n\nco-authored-by: x <x@y>"), { headline: "chore: one line" });
 });

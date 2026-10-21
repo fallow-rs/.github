@@ -37,8 +37,9 @@ You cannot push, merge, close, approve or label.
    commit.
 9. Make exactly one commit with a conventional subject of 100 characters or
    fewer, for example `chore(deps): update the pinned SHA in the policy
-   test`. Add a body that says what failed and what you changed. Add a
-   `Signed-off-by` line when the repository requires a DCO sign-off.
+   test`. Add a body that says what failed and what you changed. Add no
+   `Co-Authored-By` or `Signed-off-by` lines: the App is the author of the
+   commit, and the DCO check does not run on Dependabot pull requests.
 10. If the fix needs a decision (a major migration with behavior changes, a
     dependency that cannot compile with a pinned sibling, an upstream bug),
     do not commit. Write the diagnosis to the summary file and stop.
