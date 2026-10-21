@@ -11,14 +11,20 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { checkRepair, MAX_CHANGED_LINES, parseNumstat, parseRawModes } from "./guard.mjs";
+import {
+  addedLines,
+  checkRepair,
+  MAX_CHANGED_LINES,
+  parseNumstat,
+  parseRawModes,
+} from "./guard.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./guard.mjs", import.meta.url));
 const file = (path, added = 1, deleted = 1, mode = "100644") => ({ path, added, deleted, mode });
 
-test("one commit with a test and a lockfile change passes and needs review", () => {
+test("one commit with a test and a lockfile change passes and auto-merges", () => {
   const files = [file("scripts/workflow-policy.test.mjs"), file("package-lock.json", 900, 900)];
-  assert.deepEqual(checkRepair({ commits: 1, files }), { ok: true, problems: [], merge: "review" });
+  assert.deepEqual(checkRepair({ commits: 1, files }), { ok: true, problems: [], merge: "auto" });
 });
 
 test("more than one commit is rejected", () => {
@@ -97,13 +103,7 @@ test("a symbolic link or a submodule is rejected", () => {
 });
 
 test("a change to code that a build runs is accepted but needs review", () => {
-  for (const path of [
-    "crates/mcp/src/server.rs",
-    "crates/cli/build.rs",
-    "package.json",
-    "hk.pkl",
-    "scripts/workflow-policy.test.mjs",
-  ]) {
+  for (const path of ["crates/mcp/src/server.rs", "crates/cli/build.rs", "hk.pkl"]) {
     const result = checkRepair({ commits: 1, files: [file(path), file("Cargo.lock")] });
     assert.equal(result.ok, true, path);
     assert.equal(result.merge, "review", path);
@@ -114,9 +114,9 @@ test("a change to code that a build runs is accepted but needs review", () => {
   assert.equal(checkRepair({ commits: 1, files: viz }, FALLOW).merge, "auto");
 });
 
-test("a lockfile change needs review, because it can name another registry package", () => {
+test("a lockfile change with registry sources only auto-merges", () => {
   const files = [file("crates/cli/tests/snapshots/a.snap"), file("Cargo.lock")];
-  assert.equal(checkRepair({ commits: 1, files }).merge, "review");
+  assert.equal(checkRepair({ commits: 1, files }).merge, "auto");
 });
 
 test("the raw diff gives the new mode of each path", () => {
@@ -168,6 +168,77 @@ test("without options lockfiles do not count toward the size limit and snapshots
   assert.deepEqual(checkRepair({ commits: 1, files: lock }), {
     ok: true,
     problems: [],
-    merge: "review",
+    merge: "auto",
   });
+});
+
+test("a repair of lockfiles, manifests and tests auto-merges when every source is the registry", () => {
+  const files = [
+    file("bun.lock", 20, 30),
+    file("site/package.json"),
+    file("crates/a/Cargo.toml"),
+    file("scripts/workflow-policy.test.mjs"),
+    file("src/__tests__/parse.test.ts"),
+    file("crates/a/tests/it.rs"),
+  ];
+  const sourceLines = [
+    '    "@oxc-project/runtime": ["@oxc-project/runtime@0.153.0", "", {}, "sha512-abc"],',
+    '      "resolved": "https://registry.npmjs.org/a/-/a-1.0.0.tgz",',
+  ];
+  const manifestLines = [
+    '        "vite": "npm:@voidzero-dev/vite-plus-core@1.1.0",',
+    'serde = "1.0.210"',
+  ];
+  assert.equal(checkRepair({ commits: 1, files, sourceLines, manifestLines }).merge, "auto");
+});
+
+test("a new package source outside the registry needs review", () => {
+  const files = [file("package.json"), file("Cargo.toml"), file("package-lock.json")];
+  for (const line of [
+    '    "a": "github:x/y",',
+    '    "a": "git+ssh://git@github.com/x/y.git",',
+    '    "a": "file:../a",',
+    '    "a": "link:../a",',
+    'a = { git = "https://github.com/x/y" }',
+    'a = { path = "../a" }',
+    '      "resolved": "https://evil.example/a.tgz",',
+  ]) {
+    assert.equal(checkRepair({ commits: 1, files, sourceLines: [line] }).merge, "review", line);
+    assert.equal(checkRepair({ commits: 1, files, manifestLines: [line] }).merge, "review", line);
+  }
+});
+
+test("a change to application code still needs review", () => {
+  const files = [file("src/server.ts"), file("package.json")];
+  assert.equal(checkRepair({ commits: 1, files }).merge, "review");
+});
+
+test("added lines come from hunks only", () => {
+  const diff = [
+    "diff --git a/package.json b/package.json",
+    "+++ b/package.json",
+    "@@ -1 +1,2 @@",
+    '-    "a": "1.0.0",',
+    '+    "a": "1.1.0",',
+  ].join("\n");
+  assert.deepEqual(addedLines(diff), ['    "a": "1.1.0",']);
+});
+
+test("a manifest line that is not a dependency version needs review", () => {
+  const files = [file("package.json")];
+  for (const line of [
+    '    "postinstall": "node evil.js",',
+    '    "test": "vitest run",',
+    'build = "build.rs"',
+  ]) {
+    assert.equal(checkRepair({ commits: 1, files, manifestLines: [line] }).merge, "review", line);
+  }
+  const ok = [
+    '    "vite": "^7.1.0",',
+    '    "a": "npm:b@1.2.3",',
+    'serde = "1.0.210"',
+    'tokio = { version = "1.48", features = ["rt"] }',
+    "  },",
+  ];
+  assert.equal(checkRepair({ commits: 1, files, manifestLines: ok }).merge, "auto");
 });

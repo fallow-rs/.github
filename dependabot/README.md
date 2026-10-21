@@ -8,14 +8,14 @@ maintainer in most cases.
 
 | Event | Job | Result |
 | --- | --- | --- |
-| A pull request workflow succeeds | Merge | Merges the pull request when every check on the head commit passed, the update is a minor or patch update, and no `needs-review` or `needs-human` label is set. |
+| A pull request workflow succeeds | Merge | Merges the pull request when every check on the head commit passed and no `needs-review` or `needs-human` label is set. Major and SHA-only updates merge too. |
 | The caller's schedule | Sweep | Checks every open Dependabot pull request the same way. This catches a pull request whose last check came from an app. |
 | A pull request workflow fails | Triage | Reruns cancelled or flaky jobs, asks for a repair, or labels the pull request `needs-human` after two failed repairs. |
-| Triage asks for a repair | Repair, Publish | Claude makes one commit, and the guard checks it. A repair of generated files or snapshots is pushed by the fallow-dependabot App and merges when the checks pass. Any other repair, lockfiles included, is not pushed: the pull request gets the `needs-review` label and a comment with the patch and the command to apply it. |
+| Triage asks for a repair | Repair, Publish | Claude makes one commit, and the guard checks it. A repair of lockfiles, package manifests, tests, snapshots or generated files is pushed by the fallow-dependabot App and merges when the checks pass. A repair of application code is not pushed: the pull request gets the `needs-review` label and a comment with the patch and the command to apply it. |
 
 The merge does not depend on branch protection, so it also works in a
-repository without required checks. Major updates always wait for a
-maintainer.
+repository without required checks. CI is the only gate for an update,
+majors included.
 
 ## Add a repository
 
@@ -96,11 +96,12 @@ installed on every repository that calls the workflow.
   rejects changes under `.github/`, to the changelog and to git metadata
   files, binary files, symbolic links, submodules and more than 300
   hand-written lines. The push token can write contents only.
-- Only a repair of generated files or snapshots is pushed without review. A
-  push from the App starts the pull request CI with the repository secrets,
-  so any other repair waits for a maintainer. A lockfile change also waits,
-  because a lockfile can name a different package that is still on the
-  registry.
+- A repair is pushed without review only when it touches lockfiles, package
+  manifests, tests, snapshots or generated files, every added manifest line
+  only sets a dependency version, and no added lockfile line names a source
+  outside the registry. A push from the App starts the pull request CI with
+  the repository secrets, so a repair of application code waits for a
+  maintainer.
 
 ## Development
 

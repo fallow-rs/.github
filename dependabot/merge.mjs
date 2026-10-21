@@ -6,7 +6,7 @@
 // - the run is for the current head commit,
 // - it has no `needs-review` or `needs-human` label,
 // - every commit is from Dependabot or the repair workflow,
-// - every update in the Dependabot metadata is a minor or patch update,
+// - a Dependabot commit carries the dependency metadata,
 // - every workflow run and check on the head commit is complete and passed,
 //   and at least one check ran. A workflow run exists as soon as the push
 //   starts it, before its check runs do, so a slow workflow holds the merge,
@@ -38,6 +38,7 @@ const CHECKED_EVENTS = new Set(["pull_request", "push"]);
 const AUTOMATION_AUTHORS = new Set([DEPENDABOT, "claude[bot]"]);
 const HOLD_LABELS = ["needs-review", "needs-human"];
 const PASSED = new Set(["success", "neutral", "skipped"]);
+const DEPENDENCY_METADATA = /^updated-dependencies:\n- dependency-name: \S/mu;
 const UPDATE_TYPE = /update-type: version-update:semver-(major|minor|patch)/gu;
 const API = "https://api.github.com";
 const REQUIRED_ENV = ["GITHUB_TOKEN", "GITHUB_REPOSITORY", "GITHUB_OUTPUT"];
@@ -84,11 +85,12 @@ export const decideMerge = (
   );
   if (unsigned) return hold("a Dependabot commit has no verified signature");
 
-  const types = commits
-    .filter((commit) => commit.author === DEPENDABOT)
-    .flatMap((commit) => updateTypes(commit.message));
-  if (types.length === 0) return hold("the Dependabot metadata names no update type");
-  if (types.includes("major")) return hold("the update includes a major version");
+  // Every update merges when CI passes, majors included. A SHA-only update has
+  // no update type, so the metadata block itself is the requirement.
+  const described = commits.some(
+    (commit) => commit.author === DEPENDABOT && DEPENDENCY_METADATA.test(commit.message),
+  );
+  if (!described) return hold("the commit has no Dependabot metadata");
 
   const runs = workflowRuns.filter((run) => !ignoreCheck.test(run.name));
   const openRun = runs.find((run) => run.status !== "completed");
