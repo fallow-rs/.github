@@ -17,6 +17,15 @@ The merge does not depend on branch protection, so it also works in a
 repository without required checks. CI is the only gate for an update,
 majors included.
 
+A repair builds on the current default branch, and a repaired pull request
+merges only on top of it. When a failed pull request is behind, or a repaired
+one is behind or in conflict, `sync.mjs` merges the default branch into it with
+the App. On a conflict it first drops the repair and merge commits after the
+newest Dependabot commit. The next run then repairs again on the current base.
+So two repairs that raise the same version or build the same output never both
+merge. A Dependabot-only pull request keeps the behavior of Dependabot: it
+rebases its own branch on a conflict.
+
 ## Add a repository
 
 1. Add `.github/workflows/dependabot.yml`. List every workflow that runs on

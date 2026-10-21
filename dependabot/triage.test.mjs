@@ -176,3 +176,15 @@ test("without options no job is ignored or treated as flaky", () => {
   const jobs = [job("VS Code Extension", "failure"), job("CI", "failure")];
   assert.deepEqual(classify(input({ jobs })).failedJobs, ["VS Code Extension", "CI"]);
 });
+
+test("a failure on a branch behind the base branch brings the branch up to date before a repair", () => {
+  assert.equal(classify(input({ behindBy: 1 }), OPTIONS).action, "sync");
+  assert.equal(classify(input({ behindBy: 0 }), OPTIONS).action, "repair");
+});
+
+test("a merge commit of the App does not count as a person", () => {
+  const commits = [dependabot, { author: "fallow-dependabot[bot]" }];
+  const options = { ...OPTIONS, appLogin: "fallow-dependabot[bot]" };
+  assert.equal(classify(input({ commits }), options).action, "repair");
+  assert.equal(classify(input({ commits }), OPTIONS).action, "skip");
+});

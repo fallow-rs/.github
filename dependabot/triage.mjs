@@ -2,6 +2,9 @@
 // a Dependabot pull request:
 // - skip: nothing to do, or a person owns the branch now,
 // - rerun: only cancelled jobs or one known flaky job failed,
+// - sync: a job failed on a branch that is behind its base branch. sync.mjs
+//   brings it up to date first, so a repair builds on the current base and
+//   two repairs cannot raise the same version,
 // - repair: a job failed for a reason a companion commit can fix,
 // - give-up: the repair limit is reached, so a maintainer must look.
 //
@@ -10,7 +13,8 @@
 // and an excerpt of each failed job log to LOG_FILE for the repair step.
 // IGNORE_JOBS and FLAKY_JOBS are optional regular expressions on job names:
 // an aggregator job that only repeats other results, and a job that can fail
-// without a code cause.
+// without a code cause. APP_LOGIN is the login of the App whose merge
+// commits bring a branch up to date; they count as automation.
 //
 // Run: GITHUB_TOKEN=... GITHUB_REPOSITORY=owner/repo RUN_ID=1 RUN_ATTEMPT=1 \
 //   HEAD_BRANCH=dependabot/... RUN_HEAD_SHA=... LOG_FILE=/tmp/failed.log \
@@ -53,20 +57,22 @@ const API = "https://api.github.com";
  *   runAttempt: number,
  *   commits: { author: string }[],
  *   jobs: { name: string, conclusion: string | null }[],
+ *   behindBy?: number,
  * }} input
- * @param {{ ignoreJob?: RegExp, flakyJob?: RegExp }} [options]
- * @returns {{ action: "skip" | "rerun" | "repair" | "give-up", reason: string, failedJobs: string[] }}
+ * @param {{ ignoreJob?: RegExp, flakyJob?: RegExp, appLogin?: string }} [options]
+ * @returns {{ action: "skip" | "rerun" | "sync" | "repair" | "give-up", reason: string, failedJobs: string[] }}
  */
 export const classify = (
-  { pr, runHeadSha, runAttempt, commits, jobs },
-  { ignoreJob = NO_MATCH, flakyJob = NO_MATCH } = {},
+  { pr, runHeadSha, runAttempt, commits, jobs, behindBy = 0 },
+  { ignoreJob = NO_MATCH, flakyJob = NO_MATCH, appLogin = "" } = {},
 ) => {
+  const automation = new Set([...AUTOMATION_AUTHORS, ...(appLogin ? [appLogin] : [])]);
   const result = (action, reason, failedJobs = []) => ({ action, reason, failedJobs });
   if (pr === null) return result("skip", "no open Dependabot pull request for this branch");
   if (pr.headSha !== runHeadSha) return result("skip", "the run is for an older head commit");
   if (pr.labels.includes(HANDOFF_LABEL)) return result("skip", `the ${HANDOFF_LABEL} label is set`);
 
-  const person = commits.find((commit) => !AUTOMATION_AUTHORS.has(commit.author));
+  const person = commits.find((commit) => !automation.has(commit.author));
   if (person) return result("skip", `${person.author} has pushed to this branch`);
 
   const counted = jobs.filter((job) => !ignoreJob.test(job.name));
@@ -81,6 +87,9 @@ export const classify = (
     return result("rerun", "only a known flaky job failed", failed);
   }
 
+  if (behindBy > 0) {
+    return result("sync", `the branch is ${behindBy} commits behind its base branch`, failed);
+  }
   const repairs = commits.filter((commit) => commit.author === REPAIR_BOT).length;
   if (repairs >= MAX_REPAIRS) {
     return result("give-up", `${repairs} repair commits did not make the run pass`, failed);
@@ -132,7 +141,13 @@ const findPullRequest = async (repo, branch, token) => {
     headSha: pull.head.sha,
     title: pull.title,
     labels: pull.labels.map((label) => label.name),
+    baseRef: pull.base.ref,
   };
+};
+
+const behindBase = async (repo, pr, token) => {
+  const path = `/repos/${repo}/compare/${encodeURIComponent(pr.baseRef)}...${pr.headSha}`;
+  return (await githubJson(path, token)).behind_by;
 };
 
 const listCommits = async (repo, number, token) => {
@@ -231,6 +246,9 @@ const main = async () => {
   const pr = await findPullRequest(repo, env.HEAD_BRANCH, token);
   const jobs = await listJobs(repo, env.RUN_ID, attempt, token);
   const commits = pr ? await listCommits(repo, pr.number, token) : [];
+  // The repair job sets CHECK_BEHIND=false: it builds untrusted code, so it has
+  // no App token to update the branch, and its triage only collects the logs.
+  const behindBy = pr && env.CHECK_BEHIND !== "false" ? await behindBase(repo, pr, token) : 0;
   const decision = classify(
     {
       pr,
@@ -238,10 +256,12 @@ const main = async () => {
       runAttempt: attempt,
       commits,
       jobs: jobs.map((job) => ({ name: job.name, conclusion: job.conclusion })),
+      behindBy,
     },
     {
       ignoreJob: optionalPattern(env.IGNORE_JOBS),
       flakyJob: optionalPattern(env.FLAKY_JOBS),
+      appLogin: env.APP_LOGIN ?? "",
     },
   );
 
