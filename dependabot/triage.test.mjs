@@ -12,8 +12,8 @@ import { classify, excerptLog, MAX_REPAIRS, updateSize } from "./triage.mjs";
 const SCRIPT_PATH = fileURLToPath(new URL("./triage.mjs", import.meta.url));
 const HEAD = "abc123";
 const pr = (overrides = {}) => ({ number: 7, headSha: HEAD, labels: [], ...overrides });
-const dependabot = { author: "dependabot[bot]" };
-const repair = { author: "claude[bot]" };
+const dependabot = { author: "dependabot[bot]", committer: "web-flow", verified: true, parents: 1 };
+const repair = { author: "fallow-dependabot[bot]", committer: "web-flow", verified: true, parents: 1 };
 const job = (name, conclusion) => ({ name, conclusion });
 
 const input = (overrides = {}) => ({
@@ -183,14 +183,14 @@ test("a failure on a branch behind the base branch brings the branch up to date 
 });
 
 test("a merge commit of the App does not count as a person", () => {
-  const commits = [dependabot, { author: "fallow-dependabot[bot]", committer: "web-flow", verified: true }];
-  const options = { ...OPTIONS, appLogin: "fallow-dependabot[bot]" };
-  assert.equal(classify(input({ commits }), options).action, "repair");
-  assert.equal(classify(input({ commits }), OPTIONS).action, "skip");
+  const commits = [dependabot, { author: "fallow-dependabot[bot]", committer: "web-flow", verified: true, parents: 2 }];
+  assert.equal(classify(input({ commits }), OPTIONS).action, "repair");
+  const other = { ...OPTIONS, appLogin: "other-app[bot]" };
+  assert.equal(classify(input({ commits }), other).action, "skip");
 });
 
 const APP_OPTIONS = { ...OPTIONS, appLogin: "fallow-dependabot[bot]" };
-const appMerge = { author: "fallow-dependabot[bot]", committer: "web-flow", verified: true };
+const appMerge = { author: "fallow-dependabot[bot]", committer: "web-flow", verified: true, parents: 2 };
 
 test("a review label stops the triage too", () => {
   assert.equal(classify(input({ pr: pr({ labels: ["needs-review"] }) }), OPTIONS).action, "skip");
@@ -199,8 +199,10 @@ test("a review label stops the triage too", () => {
 test("a repair commit that a person pushed counts as a person", () => {
   const applied = { author: "claude[bot]", committer: "BartWaardenburg" };
   assert.equal(classify(input({ commits: [dependabot, applied] }), OPTIONS).action, "skip");
-  const pushed = { author: "claude[bot]", committer: "claude[bot]" };
-  assert.equal(classify(input({ commits: [dependabot, pushed] }), OPTIONS).action, "repair");
+  // A repair commit pushed with git, even by the old bot, is not signed.
+  const pushed = { author: "claude[bot]", committer: "claude[bot]", verified: false };
+  assert.equal(classify(input({ commits: [dependabot, pushed] }), OPTIONS).action, "skip");
+  assert.equal(classify(input({ commits: [dependabot, repair] }), OPTIONS).action, "repair");
 });
 
 test("an unsigned commit in the name of the App counts as a person", () => {

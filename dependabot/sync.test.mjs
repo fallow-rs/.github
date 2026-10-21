@@ -14,8 +14,8 @@ import { resetTarget } from "./sync.mjs";
 const SCRIPT_PATH = fileURLToPath(new URL("./sync.mjs", import.meta.url));
 const APP = "fallow-dependabot[bot]";
 const dependabot = (sha) => ({ sha, author: "dependabot[bot]", committer: "web-flow", verified: true });
-const repair = (sha, committer = "claude[bot]") => ({ sha, author: "claude[bot]", committer });
-const appMerge = (sha) => ({ sha, author: APP, committer: "web-flow", verified: true });
+const repair = (sha) => ({ sha, author: APP, committer: "web-flow", verified: true, parents: 1 });
+const appMerge = (sha) => ({ sha, author: APP, committer: "web-flow", verified: true, parents: 2 });
 
 test("the reset target is the newest Dependabot commit when only automation follows it", () => {
   assert.equal(resetTarget([dependabot("d1"), appMerge("m1"), repair("r1")], APP), "d1");
@@ -28,8 +28,9 @@ test("a branch that ends with its Dependabot commit needs no reset", () => {
 test("a commit from a person after the Dependabot commit blocks the reset", () => {
   const person = { sha: "p1", author: "someone", committer: "someone" };
   assert.equal(resetTarget([dependabot("d1"), person, repair("r1")], APP), null);
-  // A maintainer who applied a repair patch keeps claude[bot] as the author.
-  assert.equal(resetTarget([dependabot("d1"), repair("r1", "BartWaardenburg")], APP), null);
+  // A maintainer who applied a repair patch keeps the patch author.
+  const applied = { sha: "a1", author: "claude[bot]", committer: "BartWaardenburg", verified: false };
+  assert.equal(resetTarget([dependabot("d1"), applied], APP), null);
   const forged = { ...appMerge("m1"), verified: false };
   assert.equal(resetTarget([dependabot("d1"), forged], APP), null);
 });
@@ -97,6 +98,7 @@ const toApi = (commit) => ({
   author: { login: commit.author },
   committer: { login: commit.committer },
   commit: { verification: { verified: commit.verified ?? false }, message: "" },
+  parents: Array.from({ length: commit.parents ?? 1 }, () => ({ sha: "p" })),
 });
 
 /**
