@@ -23,6 +23,23 @@ const REQUIRED_ENV = ["GITHUB_TOKEN", "GITHUB_REPOSITORY", "BRANCH", "BEFORE"];
 const REGULAR_FILE = "100644";
 const DELETED = "000000";
 
+// The App is the author of a repair commit, so a co-author or sign-off line
+// would name someone who did not author it.
+const DROPPED_TRAILER = /^(?:co-authored-by|signed-off-by):/iu;
+
+/**
+ * Splits a repair commit message for createCommitOnBranch, without trailers
+ * that name another author.
+ * @param {string} message
+ * @returns {{ headline: string, body?: string }}
+ */
+export const commitMessage = (message) => {
+  const lines = message.split("\n").filter((line) => !DROPPED_TRAILER.test(line.trim()));
+  const [headline, ...rest] = lines;
+  const body = rest.join("\n").trim();
+  return { headline: headline.trim(), ...(body ? { body } : {}) };
+};
+
 const git = (args, { cwd, encoding = "utf8" } = {}) =>
   execFileSync("git", args, { cwd, encoding, maxBuffer: 512 * 1024 * 1024 });
 
@@ -85,15 +102,12 @@ const main = async () => {
   const { GITHUB_TOKEN: token, GITHUB_REPOSITORY: repo, BRANCH: branch, BEFORE: before } = env;
 
   const changes = fileChanges(before);
-  const message = git(["log", "-1", "--format=%B"]).trim();
-  const [headline, ...rest] = message.split("\n");
-  const body = rest.join("\n").trim();
   const created = await request("POST", GRAPHQL, token, {
     query: CREATE,
     variables: {
       input: {
         branch: { repositoryNameWithOwner: repo, branchName: branch },
-        message: { headline, ...(body ? { body } : {}) },
+        message: commitMessage(git(["log", "-1", "--format=%B"])),
         expectedHeadOid: before,
         fileChanges: changes,
       },
