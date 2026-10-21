@@ -34,7 +34,7 @@ test("a minor update with every check passed merges", () => {
     merge: true,
     reason: "every check passed",
     sync: false,
-    repaired: false,
+    edited: false,
   });
 });
 
@@ -164,7 +164,7 @@ test("a repaired pull request behind the base branch is brought up to date befor
   assert.equal(behind.merge, false);
   assert.equal(behind.sync, true);
   const current = decideMerge(input({ commits, behindBy: 0 }), APP);
-  assert.deepEqual([current.merge, current.repaired], [true, true]);
+  assert.deepEqual([current.merge, current.edited], [true, true]);
 });
 
 test("a Dependabot-only pull request behind the base branch merges without an update", () => {
@@ -185,4 +185,17 @@ test("a merge commit of the App counts as automation only when the App login is 
   const commits = [MINOR_COMMIT, APP_MERGE, REPAIR_COMMIT];
   assert.equal(decideMerge(input({ commits }), APP).merge, true);
   assert.match(decideMerge(input({ commits })).reason, /fallow-dependabot\[bot\] has pushed/u);
+});
+
+test("a branch with only a merge of the base is synced too, so it never sticks", () => {
+  const dirty = { number: 7, headSha: HEAD, labels: [], mergeableState: "dirty" };
+  const result = decideMerge(input({ pr: dirty, commits: [MINOR_COMMIT, APP_MERGE] }), APP);
+  assert.deepEqual([result.merge, result.sync], [false, true]);
+});
+
+test("a repair commit that a person pushed, or an unsigned App commit, holds the merge", () => {
+  const applied = { ...REPAIR_COMMIT, committer: "BartWaardenburg" };
+  assert.match(decideMerge(input({ commits: [MINOR_COMMIT, applied] }), APP).reason, /has pushed/u);
+  const forged = { ...APP_MERGE, verified: false };
+  assert.match(decideMerge(input({ commits: [MINOR_COMMIT, forged] }), APP).reason, /has pushed/u);
 });

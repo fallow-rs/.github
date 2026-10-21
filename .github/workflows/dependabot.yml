@@ -70,6 +70,11 @@ env:
 jobs:
   merge:
     name: Merge
+    # One merge decision at a time per repository. The check that an edited
+    # pull request is on top of its base then sees every earlier merge.
+    concurrency:
+      group: dependabot-merge-${{ github.repository }}
+      cancel-in-progress: false
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'pull_request' &&
@@ -125,7 +130,7 @@ jobs:
           permission-pull-requests: write
           permission-workflows: write
 
-      # A repaired branch merges only on top of the current base. The App
+      # An edited branch merges only on top of the current base. The App
       # token starts CI on the new head, and that run decides again.
       - name: Bring the pull request up to date
         if: steps.decide.outputs.sync == 'true'
@@ -148,15 +153,15 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           PR: ${{ steps.decide.outputs.pr }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          REPAIRED: ${{ steps.decide.outputs.repaired }}
+          EDITED: ${{ steps.decide.outputs.edited }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "::warning::Set the DEPENDABOT_APP_CLIENT_ID variable and the DEPENDABOT_APP_PRIVATE_KEY secret to merge."
             exit 0
           fi
-          # Another merge may have moved the base since the decision. A repaired
+          # Another merge may have moved the base since the decision. An edited
           # pull request then waits for its sync, so two repairs never both merge.
-          if [ "$REPAIRED" = true ]; then
+          if [ "$EDITED" = true ]; then
             base=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)
             behind=$(gh api "repos/$GITHUB_REPOSITORY/compare/$base...$HEAD_SHA" --jq .behind_by)
             if [ "$behind" != 0 ]; then
@@ -175,6 +180,11 @@ jobs:
   # workflow_run event.
   sweep:
     name: Sweep
+    # One merge decision at a time per repository. The check that an edited
+    # pull request is on top of its base then sees every earlier merge.
+    concurrency:
+      group: dependabot-merge-${{ github.repository }}
+      cancel-in-progress: false
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -225,9 +235,9 @@ jobs:
           permission-pull-requests: write
           permission-workflows: write
 
-      # A repaired branch merges only on top of the current base. The App
+      # An edited branch merges only on top of the current base. The App
       # token starts CI on each new head, and that run decides again.
-      - name: Bring the repaired pull requests up to date
+      - name: Bring the edited pull requests up to date
         if: steps.decide.outputs.syncs != '[]'
         env:
           GITHUB_TOKEN: ${{ steps.app.outputs.token }}
@@ -255,12 +265,12 @@ jobs:
             echo "::warning::Set the DEPENDABOT_APP_CLIENT_ID variable and the DEPENDABOT_APP_PRIVATE_KEY secret to merge."
             exit 0
           fi
-          # The list puts repaired pull requests first. After any merge the base
-          # has moved, so a later repaired one waits for its sync.
+          # The list puts edited pull requests first. After any merge the base
+          # has moved, so a later edited one waits for its sync.
           merged=0
-          while read -r number sha repaired; do
-            if [ "$repaired" = true ] && [ "$merged" -gt 0 ]; then
-              echo "::notice::#$number is repaired and the base moved. The next run brings it up to date."
+          while read -r number sha edited; do
+            if [ "$edited" = true ] && [ "$merged" -gt 0 ]; then
+              echo "::notice::#$number is edited and the base moved. The next run brings it up to date."
               continue
             fi
             if gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$sha"; then
@@ -268,7 +278,7 @@ jobs:
             else
               echo "::notice::#$number did not merge. The next run checks it again."
             fi
-          done < <(printf '%s' "$PRS" | jq -r '.[] | "\(.number) \(.sha) \(.repaired)"')
+          done < <(printf '%s' "$PRS" | jq -r '.[] | "\(.number) \(.sha) \(.edited)"')
 
   triage:
     name: Triage
@@ -317,6 +327,8 @@ jobs:
           IGNORE_JOBS: ${{ inputs.ignore-jobs }}
           FLAKY_JOBS: ${{ inputs.flaky-jobs }}
           APP_LOGIN: ${{ inputs.app-login }}
+          # Without the App nothing can update the branch, so repair at once.
+          CHECK_BEHIND: ${{ vars.DEPENDABOT_APP_CLIENT_ID != '' }}
         run: node dependabot/triage.mjs
 
       - id: app

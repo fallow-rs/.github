@@ -11,12 +11,14 @@
 //   and at least one check ran. A workflow run exists as soon as the push
 //   starts it, before its check runs do, so a slow workflow holds the merge,
 // - it has no merge conflict,
-// - when it has a repair commit, it is up to date with its base branch. Two
-//   repairs can raise the same version or build the same output, so a
-//   repaired pull request merges only on top of the current base.
+// - when it has a commit besides Dependabot's (a repair or a merge of the
+//   base), it is up to date with its base branch. Two repairs can raise the
+//   same version or build the same output, so such an edited pull request
+//   merges only on top of the current base.
 //
-// A repaired pull request that is behind or in conflict gets `sync`: sync.mjs
-// brings it up to date, and the run on the new head decides again.
+// An edited pull request that is behind or in conflict gets `sync`: sync.mjs
+// brings it up to date, and the run on the new head decides again. Dependabot
+// no longer rebases such a branch itself.
 //
 // APP_LOGIN is the login of the App that merges main into a branch, such as
 // `fallow-dependabot[bot]`. Its merge commits count as automation.
@@ -28,7 +30,7 @@
 // GITHUB_OUTPUT. With SWEEP=1 it checks every open Dependabot pull request
 // instead, and writes `prs`: a JSON list of { number, sha } to merge, and
 // `syncs`: a JSON list of pull request numbers to bring up to date. A merge
-// moves the base, so the sweep merges a repaired pull request only as the first
+// moves the base, so the sweep merges an edited pull request only as the first
 // merge of the run. The sweep catches a pull
 // request whose last check came from an app, not from a workflow run.
 //
@@ -40,16 +42,14 @@ import { appendFileSync } from "node:fs";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-const DEPENDABOT = "dependabot[bot]";
+import { DEPENDABOT, HOLD_LABELS, isAutomationCommit, toCommit } from "./identity.mjs";
+
 const NO_MATCH = /(?!)/u;
 // Runs that test the pull request. A pull_request_target run is automation
 // such as a labeler or an older auto-merge workflow. A workflow_run, schedule
 // or Dependabot ("dynamic") run is not a check of the head commit, and this
 // workflow's own run must not wait on itself.
 const CHECKED_EVENTS = new Set(["pull_request", "push"]);
-const REPAIR_BOT = "claude[bot]";
-const AUTOMATION_AUTHORS = new Set([DEPENDABOT, REPAIR_BOT]);
-const HOLD_LABELS = ["needs-review", "needs-human"];
 const PASSED = new Set(["success", "neutral", "skipped"]);
 const DEPENDENCY_METADATA = /^updated-dependencies:\n- dependency-name: \S/mu;
 const UPDATE_TYPE = /update-type: version-update:semver-(major|minor|patch)/gu;
@@ -77,7 +77,7 @@ export const updateTypes = (message) =>
  *   complete?: boolean,
  * }} input
  * @param {{ ignoreCheck?: RegExp, appLogin?: string }} [options]
- * @returns {{ merge: boolean, reason: string, sync: boolean, repaired?: boolean }}
+ * @returns {{ merge: boolean, reason: string, sync: boolean, edited?: boolean }}
  */
 export const decideMerge = (
   {
@@ -93,7 +93,6 @@ export const decideMerge = (
   { ignoreCheck = NO_MATCH, appLogin = "" } = {},
 ) => {
   const hold = (reason) => ({ merge: false, reason, sync: false });
-  const automation = new Set([...AUTOMATION_AUTHORS, ...(appLogin ? [appLogin] : [])]);
   if (pr === null) return hold("no open Dependabot pull request for this branch");
   if (pr.headSha !== runHeadSha) return hold("the run is for an older head commit");
 
@@ -101,7 +100,7 @@ export const decideMerge = (
   if (label) return hold(`the ${label} label is set`);
 
   if (!complete) return hold("the pull request has more commits or checks than one page holds");
-  const person = commits.find((commit) => !automation.has(commit.author));
+  const person = commits.find((commit) => !isAutomationCommit(commit, appLogin));
   if (person) return hold(`${person.author ?? "an unknown author"} has pushed to this branch`);
   const unsigned = commits.find(
     (commit) => commit.author === DEPENDABOT && commit.verified === false,
@@ -115,10 +114,10 @@ export const decideMerge = (
   );
   if (!described) return hold("the commit has no Dependabot metadata");
 
-  const repaired = commits.some((commit) => commit.author === REPAIR_BOT);
-  if (repaired && (pr.mergeableState === "dirty" || behindBy > 0)) {
+  const edited = commits.some((commit) => commit.author !== DEPENDABOT);
+  if (edited && (pr.mergeableState === "dirty" || behindBy > 0)) {
     const state = pr.mergeableState === "dirty" ? "in conflict" : `${behindBy} commits behind`;
-    return { merge: false, reason: `the repaired branch is ${state}`, sync: true };
+    return { merge: false, reason: `the edited branch is ${state}`, sync: true };
   }
 
   const runs = workflowRuns.filter((run) => !ignoreCheck.test(run.name));
@@ -137,7 +136,7 @@ export const decideMerge = (
   }
 
   if (pr.mergeableState === "dirty") return hold("the pull request has a merge conflict");
-  return { merge: true, reason: "every check passed", sync: false, repaired };
+  return { merge: true, reason: "every check passed", sync: false, edited };
 };
 
 const githubJson = async (path, token) => {
@@ -199,13 +198,7 @@ const decideFor = async (repo, pr, sha, token, options) => {
     {
       pr,
       runHeadSha: sha,
-      // Only the GitHub login counts: a free-text git author name can claim to
-      // be a bot. A commit without a login counts as a person.
-      commits: commits.map((commit) => ({
-        author: commit.author?.login ?? null,
-        message: commit.commit.message,
-        verified: commit.commit.verification?.verified ?? false,
-      })),
+      commits: commits.map(toCommit),
       workflowRuns: [...latestRuns.values()].map((run) => ({
         name: run.name,
         status: run.status,
@@ -247,7 +240,7 @@ const runOne = async (env, options) => {
   writeOutputs(env.GITHUB_OUTPUT, {
     merge: decision.merge,
     sync: decision.sync,
-    repaired: decision.repaired ?? false,
+    edited: decision.edited ?? false,
     pr: pr?.number ?? "",
     reason: decision.reason,
   });
@@ -264,13 +257,13 @@ const sweep = async (env, options) => {
     const verb = decision.merge ? "merge" : decision.sync ? "sync" : "hold";
     console.log(`#${pr.number} ${verb}: ${decision.reason}`);
     if (decision.merge) {
-      ready.push({ number: pr.number, sha: pr.headSha, repaired: decision.repaired });
+      ready.push({ number: pr.number, sha: pr.headSha, edited: decision.edited });
     }
     if (decision.sync) syncs.push(pr.number);
   }
-  // A repaired pull request must be on top of the current base. Every merge
-  // moves the base, so a repaired one goes first, and only as the first merge.
-  ready.sort((a, b) => Number(b.repaired) - Number(a.repaired));
+  // An edited pull request must be on top of the current base. Every merge
+  // moves the base, so an edited one goes first, and only as the first merge.
+  ready.sort((a, b) => Number(b.edited) - Number(a.edited));
   writeOutputs(env.GITHUB_OUTPUT, { prs: JSON.stringify(ready), syncs: JSON.stringify(syncs) });
 };
 

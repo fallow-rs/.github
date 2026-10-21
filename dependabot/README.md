@@ -17,14 +17,26 @@ The merge does not depend on branch protection, so it also works in a
 repository without required checks. CI is the only gate for an update,
 majors included.
 
-A repair builds on the current default branch, and a repaired pull request
-merges only on top of it. When a failed pull request is behind, or a repaired
-one is behind or in conflict, `sync.mjs` merges the default branch into it with
-the App. On a conflict it first drops the repair and merge commits after the
-newest Dependabot commit. The next run then repairs again on the current base.
-So two repairs that raise the same version or build the same output never both
-merge. A Dependabot-only pull request keeps the behavior of Dependabot: it
-rebases its own branch on a conflict.
+A repair builds on the current default branch, and an edited pull request (one
+with a repair or a merge of the base) merges only on top of it:
+
+- When a failed pull request is behind, triage brings it up to date before a
+  repair. A repository without the App repairs at once.
+- When an edited pull request is behind or in conflict, the merge jobs bring it
+  up to date first. On a conflict, `sync.mjs` drops the repair and merge
+  commits after the newest Dependabot commit, and Dependabot rebases its own
+  change if that is in conflict too. A person's commit or a hold label stops
+  it.
+- The merge and sweep jobs share one concurrency group, and the sweep merges an
+  edited pull request only as the first merge of a run. So two repairs that
+  raise the same version or build the same output never both merge. GitHub
+  keeps one pending job per group, so a merge job can be dropped; the next
+  sweep then merges that pull request.
+- A pull request that only Dependabot changed keeps the behavior of Dependabot.
+
+A conflict reset drops the repair commits, so their count starts again. Each
+reset needs a conflicting change on the default branch, which limits how often
+that happens.
 
 ## Add a repository
 

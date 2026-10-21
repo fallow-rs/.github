@@ -24,14 +24,12 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { DEPENDABOT, HOLD_LABELS, isAutomationCommit, REPAIR_BOT, toCommit } from "./identity.mjs";
+
 /** Repair commits allowed on one pull request before a maintainer takes over. */
 export const MAX_REPAIRS = 2;
 
-const DEPENDABOT = "dependabot[bot]";
-const REPAIR_BOT = "claude[bot]";
-const AUTOMATION_AUTHORS = new Set([DEPENDABOT, REPAIR_BOT]);
 const NO_MATCH = /(?!)/u;
-const HANDOFF_LABEL = "needs-human";
 const VERSION_BUMP = /\bfrom v?(\d+)\.(\d+)\S* to v?(\d+)\.(\d+)/u;
 const FAILED = new Set(["failure", "timed_out"]);
 const MAX_RERUN_ATTEMPT = 2;
@@ -66,14 +64,14 @@ export const classify = (
   { pr, runHeadSha, runAttempt, commits, jobs, behindBy = 0 },
   { ignoreJob = NO_MATCH, flakyJob = NO_MATCH, appLogin = "" } = {},
 ) => {
-  const automation = new Set([...AUTOMATION_AUTHORS, ...(appLogin ? [appLogin] : [])]);
   const result = (action, reason, failedJobs = []) => ({ action, reason, failedJobs });
   if (pr === null) return result("skip", "no open Dependabot pull request for this branch");
   if (pr.headSha !== runHeadSha) return result("skip", "the run is for an older head commit");
-  if (pr.labels.includes(HANDOFF_LABEL)) return result("skip", `the ${HANDOFF_LABEL} label is set`);
+  const label = HOLD_LABELS.find((name) => pr.labels.includes(name));
+  if (label) return result("skip", `the ${label} label is set`);
 
-  const person = commits.find((commit) => !automation.has(commit.author));
-  if (person) return result("skip", `${person.author} has pushed to this branch`);
+  const person = commits.find((commit) => !isAutomationCommit(commit, appLogin));
+  if (person) return result("skip", `${person.author ?? "an unknown author"} has pushed to this branch`);
 
   const counted = jobs.filter((job) => !ignoreJob.test(job.name));
   const failed = counted.filter((job) => FAILED.has(job.conclusion)).map((job) => job.name);
@@ -87,7 +85,10 @@ export const classify = (
     return result("rerun", "only a known flaky job failed", failed);
   }
 
-  if (behindBy > 0) {
+  // A head that is already a merge of the base was just synced. Syncing again
+  // on a busy base would never end, so the repair or the hand-off goes on.
+  const justSynced = appLogin !== "" && commits.at(-1)?.author === appLogin;
+  if (behindBy > 0 && !justSynced) {
     return result("sync", `the branch is ${behindBy} commits behind its base branch`, failed);
   }
   const repairs = commits.filter((commit) => commit.author === REPAIR_BOT).length;
@@ -152,9 +153,7 @@ const behindBase = async (repo, pr, token) => {
 
 const listCommits = async (repo, number, token) => {
   const commits = await githubJson(`/repos/${repo}/pulls/${number}/commits?per_page=100`, token);
-  // Only the GitHub login counts: a free-text git author name can claim to be
-  // a bot. A commit without a login counts as a person.
-  return commits.map((commit) => ({ author: commit.author?.login ?? "an unknown author" }));
+  return commits.map(toCommit);
 };
 
 const listJobs = async (repo, runId, attempt, token) => {
