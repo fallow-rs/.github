@@ -38,6 +38,10 @@ on:
         description: Regular expression for generated files that do not count toward the size limit but need review.
         type: string
         default: ''
+      manifest-paths:
+        description: Regular expression for more manifest files, such as plugin manifests. A repair may only change version lines in them to merge without review.
+        type: string
+        default: ''
       model:
         description: Claude model for the repair.
         type: string
@@ -483,6 +487,7 @@ jobs:
         env:
           GENERATED_PATHS: ${{ inputs.generated-paths }}
           REVIEW_GENERATED_PATHS: ${{ inputs.review-generated-paths }}
+          MANIFEST_PATHS: ${{ inputs.manifest-paths }}
         run: |
           set -euo pipefail
           patch="$RUNNER_TEMP/repair/repair.patch"

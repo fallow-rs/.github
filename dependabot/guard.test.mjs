@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -114,6 +114,24 @@ test("a change to code that a build runs is accepted but needs review", () => {
   assert.equal(checkRepair({ commits: 1, files: viz }, FALLOW).merge, "auto");
 });
 
+test("a file in manifest paths auto-merges only when its added lines set versions", () => {
+  const SKILLS = {
+    generated: /^fallow\/codex-app\//u,
+    manifest: /^(?:\.claude-plugin\/marketplace\.json|fallow\/\.(?:claude|codex)-plugin\/plugin\.json)$/u,
+  };
+  const files = [
+    file("codex-app/package-lock.json"),
+    file("fallow/codex-app/server.mjs", 40, 40),
+    file("fallow/.codex-plugin/plugin.json"),
+    file(".claude-plugin/marketplace.json", 2, 2),
+  ];
+  const bump = ['  "version": "1.4.36",', '      "version": "1.4.36",'];
+  assert.equal(checkRepair({ commits: 1, files, manifestLines: bump }, SKILLS).merge, "auto");
+  const hook = [...bump, '  "hooks": "./hooks/run.sh",'];
+  assert.equal(checkRepair({ commits: 1, files, manifestLines: hook }, SKILLS).merge, "review");
+  assert.equal(checkRepair({ commits: 1, files, manifestLines: bump }).merge, "review");
+});
+
 test("a lockfile change with registry sources only auto-merges", () => {
   const files = [file("crates/cli/tests/snapshots/a.snap"), file("Cargo.lock")];
   assert.equal(checkRepair({ commits: 1, files }).merge, "auto");
@@ -156,6 +174,39 @@ test("the script started as a process checks the patch in a git repository", () 
   });
   assert.equal(run.status, 1);
   assert.match(run.stdout, /CHANGELOG\.md may not change/u);
+});
+
+test("the script reads MANIFEST_PATHS for the version lines of a plugin manifest", () => {
+  const dir = mkdtempSync(join(tmpdir(), "repair-guard-"));
+  const git = (...args) => {
+    const run = spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    return run.stdout.trim();
+  };
+  git("init", "--quiet");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  git("config", "commit.gpgsign", "false");
+  writeFileSync(join(dir, "plugin.json"), '{\n  "version": "1.0.0"\n}\n');
+  git("add", ".");
+  git("commit", "--quiet", "-m", "base");
+  const before = git("rev-parse", "HEAD");
+  writeFileSync(join(dir, "plugin.json"), '{\n  "version": "1.0.1"\n}\n');
+  git("commit", "--quiet", "-am", "repair");
+
+  const merge = (manifestPaths) => {
+    const output = join(dir, `output-${manifestPaths.length}.txt`);
+    writeFileSync(output, "");
+    const run = spawnSync(process.execPath, [SCRIPT_PATH], {
+      cwd: dir,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, BEFORE: before, GITHUB_OUTPUT: output, MANIFEST_PATHS: manifestPaths },
+    });
+    assert.equal(run.status, 0, run.stdout);
+    return readFileSync(output, "utf8").trim();
+  };
+  assert.equal(merge("^plugin\\.json$"), "merge=auto");
+  assert.equal(merge(""), "merge=review");
 });
 
 test("without options lockfiles do not count toward the size limit and snapshots are generated", () => {

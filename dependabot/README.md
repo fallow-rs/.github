@@ -62,11 +62,13 @@ majors included.
    `CLAUDE_CODE_OAUTH_TOKEN`.
 
 2. Optional inputs: `ignore-jobs`, `flaky-jobs`, `ignore-checks`,
-   `generated-paths` and `review-generated-paths` (regular expressions), and
-   `model`. Anchor each pattern with `^` and `$`: `bench` also matches
-   `bench-security`. A wide `generated-paths` pattern removes the size limit
-   and allows auto-merge for every file it matches, so keep it to real
-   generator output.
+   `generated-paths`, `review-generated-paths` and `manifest-paths` (regular
+   expressions), and `model`. Anchor each pattern with `^` and `$`: `bench`
+   also matches `bench-security`. A wide `generated-paths` pattern removes the
+   size limit and allows auto-merge for every file it matches, so keep it to
+   real generator output. Files in `manifest-paths` follow the rule of
+   `package.json`: a repair merges without review only when each added line
+   sets a version.
 3. Optional: add `.github/dependabot-repair.md` with the install commands,
    local checks and known causes of the repository. The repair reads it from
    the default branch.

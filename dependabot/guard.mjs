@@ -18,7 +18,9 @@
 // is set, and exits with 1 when the commit must not be pushed.
 //
 // GENERATED_PATHS and REVIEW_GENERATED_PATHS are optional regular expressions
-// for the generated files of the repository.
+// for the generated files of the repository. MANIFEST_PATHS is an optional
+// regular expression for more files that follow the manifest rule, such as a
+// plugin manifest whose version a build step raises.
 //
 // Run: BEFORE=<sha> node dependabot/guard.mjs
 
@@ -77,16 +79,17 @@ const LOCKFILE_PATH =
  *   sourceLines?: string[],
  *   manifestLines?: string[],
  * }} input
- * @param {{ generated?: RegExp, reviewGenerated?: RegExp }} [options] Paths that a
- *   generator writes. `generated` paths may auto-merge; `reviewGenerated`
- *   paths, such as public contracts, need review. Neither counts toward the
- *   size limit. Snapshots are always generated. Lockfiles do not count toward
- *   the size limit, but need review.
+ * @param {{ generated?: RegExp, reviewGenerated?: RegExp, manifest?: RegExp }} [options]
+ *   Paths that a generator writes. `generated` paths may auto-merge;
+ *   `reviewGenerated` paths, such as public contracts, need review. Neither
+ *   counts toward the size limit. Snapshots are always generated. Lockfiles do
+ *   not count toward the size limit, but need review. `manifest` paths follow
+ *   the rule of package.json and Cargo.toml: each added line sets a version.
  * @returns {{ ok: boolean, problems: string[], merge: "auto" | "review" }}
  */
 export const checkRepair = (
   { commits, files, sourceLines = [], manifestLines = [] },
-  { generated = NO_MATCH, reviewGenerated = NO_MATCH } = {},
+  { generated = NO_MATCH, reviewGenerated = NO_MATCH, manifest = NO_MATCH } = {},
 ) => {
   const isGenerated = (path) => SNAPSHOT_PATH.test(path) || generated.test(path);
   const isSizeExempt = (path) =>
@@ -113,7 +116,7 @@ export const checkRepair = (
   const isAutoPath = (path) =>
     isGenerated(path) ||
     LOCKFILE_PATH.test(path) ||
-    MANIFEST_PATH.test(path) ||
+    isManifestPath(path, manifest) ||
     TEST_PATH.test(path);
   const auto =
     files.every(({ path }) => isAutoPath(path)) &&
@@ -124,6 +127,14 @@ export const checkRepair = (
 };
 
 const git = (...args) => execFileSync("git", args, { encoding: "utf8" });
+
+/**
+ * Tells if a path follows the manifest rule.
+ * @param {string} path
+ * @param {RegExp} [extra] The MANIFEST_PATHS of the repository.
+ * @returns {boolean}
+ */
+const isManifestPath = (path, extra = NO_MATCH) => MANIFEST_PATH.test(path) || extra.test(path);
 
 /**
  * Parses `git diff --numstat -z --no-renames`. Each record is
@@ -201,8 +212,8 @@ const main = () => {
   const files = parseNumstat(git("diff", "--numstat", "-z", "--no-renames", before, "HEAD")).map(
     (file) => ({ ...file, mode: modes.get(file.path) ?? "" }),
   );
-  const diffLines = (pattern) => {
-    const paths = files.map(({ path }) => path).filter((path) => pattern.test(path));
+  const diffLines = (matches) => {
+    const paths = files.map(({ path }) => path).filter(matches);
     // Literal pathspecs, so a path with `*`, `:` or `[` names only itself.
     return paths.length === 0
       ? []
@@ -219,14 +230,16 @@ const main = () => {
           ),
         );
   };
-  const sourceLines = diffLines(LOCKFILE_PATH);
-  const manifestLines = diffLines(MANIFEST_PATH);
   const optional = (source) => (source ? new RegExp(source, "u") : NO_MATCH);
+  const manifest = optional(process.env.MANIFEST_PATHS);
+  const sourceLines = diffLines((path) => LOCKFILE_PATH.test(path));
+  const manifestLines = diffLines((path) => isManifestPath(path, manifest));
   const result = checkRepair(
     { commits, files, sourceLines, manifestLines },
     {
       generated: optional(process.env.GENERATED_PATHS),
       reviewGenerated: optional(process.env.REVIEW_GENERATED_PATHS),
+      manifest,
     },
   );
   for (const problem of result.problems) console.log(problem);
