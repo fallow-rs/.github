@@ -22,7 +22,7 @@ import process from "node:process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
-import { DEPENDABOT, HOLD_LABELS, isAutomationCommit, toCommit } from "./identity.mjs";
+import { DEFAULT_APP_LOGIN, DEPENDABOT, HOLD_LABELS, isAutomationCommit, toCommit } from "./identity.mjs";
 
 // Actions sets GITHUB_API_URL and GITHUB_GRAPHQL_URL. The tests point them at a
 // local server.
@@ -126,7 +126,7 @@ const main = async () => {
   if (missing.length > 0) throw new Error(`missing environment: ${missing.join(", ")}`);
   const repo = env.GITHUB_REPOSITORY;
   const token = env.GITHUB_TOKEN;
-  const appLogin = env.APP_LOGIN ?? "";
+  const appLogin = env.APP_LOGIN || DEFAULT_APP_LOGIN;
   const number = Number(env.PR);
   const pull = await readPull(repo, number, token);
   if (pull.state !== "open" || pull.user?.login !== DEPENDABOT) {

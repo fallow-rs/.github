@@ -54,9 +54,11 @@ test("a commit from a person stops the merge", () => {
   assert.equal(decideMerge(input({ commits })).merge, false);
 });
 
-test("a repair commit by claude[bot] keeps the merge", () => {
-  const commits = [MINOR_COMMIT, { author: "claude[bot]", message: "chore(deps): fix the pin" }];
-  assert.equal(decideMerge(input({ commits })).merge, true);
+test("a signed repair commit of the App keeps the merge, an unsigned claude[bot] one does not", () => {
+  const signed = { author: "fallow-dependabot[bot]", committer: "web-flow", verified: true, parents: 1, message: "fix" };
+  assert.equal(decideMerge(input({ commits: [MINOR_COMMIT, signed] })).merge, true);
+  const unsigned = { author: "claude[bot]", committer: "claude[bot]", verified: false, message: "fix" };
+  assert.match(decideMerge(input({ commits: [MINOR_COMMIT, unsigned] })).reason, /claude\[bot\] has pushed/u);
 });
 
 test("a major update merges when every check passed", () => {
@@ -154,8 +156,20 @@ test("a commit without a GitHub login or an unsigned Dependabot commit holds the
   assert.match(decideMerge(input({ commits: [unsigned] })).reason, /verified signature/u);
 });
 
-const REPAIR_COMMIT = { author: "claude[bot]", verified: false, message: "fix: repair" };
-const APP_MERGE = { author: "fallow-dependabot[bot]", verified: true, message: "Merge branch 'main'" };
+const REPAIR_COMMIT = {
+  author: "fallow-dependabot[bot]",
+  committer: "web-flow",
+  verified: true,
+  parents: 1,
+  message: "fix: repair",
+};
+const APP_MERGE = {
+  author: "fallow-dependabot[bot]",
+  committer: "web-flow",
+  verified: true,
+  parents: 2,
+  message: "Merge branch 'main'",
+};
 const APP = { appLogin: "fallow-dependabot[bot]" };
 
 test("a repaired pull request behind the base branch is brought up to date before it merges", () => {
@@ -181,10 +195,11 @@ test("a repaired pull request in conflict is synced, a Dependabot-only one is le
   assert.deepEqual([own.merge, own.sync], [false, false]);
 });
 
-test("a merge commit of the App counts as automation only when the App login is set", () => {
+test("commits of the App count as automation only for the App that the caller names", () => {
   const commits = [MINOR_COMMIT, APP_MERGE, REPAIR_COMMIT];
   assert.equal(decideMerge(input({ commits }), APP).merge, true);
-  assert.match(decideMerge(input({ commits })).reason, /fallow-dependabot\[bot\] has pushed/u);
+  const other = { appLogin: "other-app[bot]" };
+  assert.match(decideMerge(input({ commits }), other).reason, /fallow-dependabot\[bot\] has pushed/u);
 });
 
 test("a branch with only a merge of the base is synced too, so it never sticks", () => {
@@ -194,7 +209,7 @@ test("a branch with only a merge of the base is synced too, so it never sticks",
 });
 
 test("a repair commit that a person pushed, or an unsigned App commit, holds the merge", () => {
-  const applied = { ...REPAIR_COMMIT, committer: "BartWaardenburg" };
+  const applied = { author: "claude[bot]", committer: "BartWaardenburg", verified: false, message: "fix" };
   assert.match(decideMerge(input({ commits: [MINOR_COMMIT, applied] }), APP).reason, /has pushed/u);
   const forged = { ...APP_MERGE, verified: false };
   assert.match(decideMerge(input({ commits: [MINOR_COMMIT, forged] }), APP).reason, /has pushed/u);

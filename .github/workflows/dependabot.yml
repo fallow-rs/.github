@@ -568,7 +568,7 @@ jobs:
           sparse-checkout: dependabot
 
       - run: |
-          cp trusted/dependabot/guard.mjs "$RUNNER_TEMP/"
+          cp trusted/dependabot/guard.mjs trusted/dependabot/publish.mjs "$RUNNER_TEMP/"
           rm -rf trusted
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -596,8 +596,10 @@ jobs:
             echo "result=none" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          git config user.name 'claude[bot]'
-          git config user.email '209825114+claude[bot]@users.noreply.github.com'
+          # This local commit is only for the guard. publish.mjs sends its
+          # changes as a commit that GitHub signs for the App.
+          git config user.name 'Dependabot repair'
+          git config user.email 'repair@localhost'
           git am --quiet "$patch"
           git commit --amend --no-edit --quiet --reset-author
           if node "$RUNNER_TEMP/guard.mjs" > "$RUNNER_TEMP/guard.txt"; then
@@ -656,15 +658,15 @@ jobs:
           private-key: ${{ secrets.DEPENDABOT_APP_PRIVATE_KEY }}
           permission-contents: write
 
+      # GitHub creates and signs the commit for the App, on top of BEFORE
+      # only, and publish.mjs checks that its tree is the checked tree.
       - id: push
         if: steps.push-token.outputs.token != ''
         env:
-          APP_TOKEN: ${{ steps.push-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.push-token.outputs.token }}
         run: |
           set -euo pipefail
-          auth=$(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
-            push "https://github.com/$GITHUB_REPOSITORY.git" "HEAD:refs/heads/$BRANCH"
+          node "$RUNNER_TEMP/publish.mjs"
           echo "result=pushed" >> "$GITHUB_OUTPUT"
 
       # The summary comes from the repair runner, so the comment shows it in

@@ -13,8 +13,8 @@
 // and an excerpt of each failed job log to LOG_FILE for the repair step.
 // IGNORE_JOBS and FLAKY_JOBS are optional regular expressions on job names:
 // an aggregator job that only repeats other results, and a job that can fail
-// without a code cause. APP_LOGIN is the login of the App whose merge
-// commits bring a branch up to date; they count as automation.
+// without a code cause. APP_LOGIN is the login of the App that signs the
+// repair commits and the merges of the base branch.
 //
 // Run: GITHUB_TOKEN=... GITHUB_REPOSITORY=owner/repo RUN_ID=1 RUN_ATTEMPT=1 \
 //   HEAD_BRANCH=dependabot/... RUN_HEAD_SHA=... LOG_FILE=/tmp/failed.log \
@@ -24,7 +24,14 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { DEPENDABOT, HOLD_LABELS, isAutomationCommit, REPAIR_BOT, toCommit } from "./identity.mjs";
+import {
+  DEFAULT_APP_LOGIN,
+  DEPENDABOT,
+  HOLD_LABELS,
+  isAutomationCommit,
+  isRepairCommit,
+  toCommit,
+} from "./identity.mjs";
 
 /** Repair commits allowed on one pull request before a maintainer takes over. */
 export const MAX_REPAIRS = 2;
@@ -62,7 +69,7 @@ const API = "https://api.github.com";
  */
 export const classify = (
   { pr, runHeadSha, runAttempt, commits, jobs, behindBy = 0 },
-  { ignoreJob = NO_MATCH, flakyJob = NO_MATCH, appLogin = "" } = {},
+  { ignoreJob = NO_MATCH, flakyJob = NO_MATCH, appLogin = DEFAULT_APP_LOGIN } = {},
 ) => {
   const result = (action, reason, failedJobs = []) => ({ action, reason, failedJobs });
   if (pr === null) return result("skip", "no open Dependabot pull request for this branch");
@@ -87,11 +94,12 @@ export const classify = (
 
   // A head that is already a merge of the base was just synced. Syncing again
   // on a busy base would never end, so the repair or the hand-off goes on.
-  const justSynced = appLogin !== "" && commits.at(-1)?.author === appLogin;
+  const head = commits.at(-1);
+  const justSynced = head?.author === appLogin && head.parents === 2;
   if (behindBy > 0 && !justSynced) {
     return result("sync", `the branch is ${behindBy} commits behind its base branch`, failed);
   }
-  const repairs = commits.filter((commit) => commit.author === REPAIR_BOT).length;
+  const repairs = commits.filter((commit) => isRepairCommit(commit, appLogin)).length;
   if (repairs >= MAX_REPAIRS) {
     return result("give-up", `${repairs} repair commits did not make the run pass`, failed);
   }
@@ -260,7 +268,7 @@ const main = async () => {
     {
       ignoreJob: optionalPattern(env.IGNORE_JOBS),
       flakyJob: optionalPattern(env.FLAKY_JOBS),
-      appLogin: env.APP_LOGIN ?? "",
+      appLogin: env.APP_LOGIN || DEFAULT_APP_LOGIN,
     },
   );
 

@@ -20,8 +20,8 @@
 // brings it up to date, and the run on the new head decides again. Dependabot
 // no longer rebases such a branch itself.
 //
-// APP_LOGIN is the login of the App that merges main into a branch, such as
-// `fallow-dependabot[bot]`. Its merge commits count as automation.
+// APP_LOGIN is the login of the App that signs the repair commits and the
+// merges of the base branch, `fallow-dependabot[bot]` by default.
 //
 // IGNORE_CHECKS is an optional regular expression on check names, for a check
 // that fails without a code cause, such as a benchmark comparison.
@@ -42,7 +42,7 @@ import { appendFileSync } from "node:fs";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { DEPENDABOT, HOLD_LABELS, isAutomationCommit, toCommit } from "./identity.mjs";
+import { DEFAULT_APP_LOGIN, DEPENDABOT, HOLD_LABELS, isAutomationCommit, toCommit } from "./identity.mjs";
 
 const NO_MATCH = /(?!)/u;
 // Runs that test the pull request. A pull_request_target run is automation
@@ -90,7 +90,7 @@ export const decideMerge = (
     complete = true,
     behindBy = 0,
   },
-  { ignoreCheck = NO_MATCH, appLogin = "" } = {},
+  { ignoreCheck = NO_MATCH, appLogin = DEFAULT_APP_LOGIN } = {},
 ) => {
   const hold = (reason) => ({ merge: false, reason, sync: false });
   if (pr === null) return hold("no open Dependabot pull request for this branch");
@@ -100,12 +100,12 @@ export const decideMerge = (
   if (label) return hold(`the ${label} label is set`);
 
   if (!complete) return hold("the pull request has more commits or checks than one page holds");
-  const person = commits.find((commit) => !isAutomationCommit(commit, appLogin));
-  if (person) return hold(`${person.author ?? "an unknown author"} has pushed to this branch`);
   const unsigned = commits.find(
     (commit) => commit.author === DEPENDABOT && commit.verified === false,
   );
   if (unsigned) return hold("a Dependabot commit has no verified signature");
+  const person = commits.find((commit) => !isAutomationCommit(commit, appLogin));
+  if (person) return hold(`${person.author ?? "an unknown author"} has pushed to this branch`);
 
   // Every update merges when CI passes, majors included. A SHA-only update has
   // no update type, so the metadata block itself is the requirement.
@@ -273,7 +273,7 @@ const main = async () => {
   if (missing.length > 0) throw new Error(`missing environment: ${missing.join(", ")}`);
   const options = {
     ignoreCheck: env.IGNORE_CHECKS ? new RegExp(env.IGNORE_CHECKS, "u") : NO_MATCH,
-    appLogin: env.APP_LOGIN ?? "",
+    appLogin: env.APP_LOGIN || DEFAULT_APP_LOGIN,
   };
   await (env.SWEEP === "1" ? sweep(env, options) : runOne(env, options));
 };

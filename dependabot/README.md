@@ -11,7 +11,7 @@ maintainer in most cases.
 | A pull request workflow succeeds | Merge | Merges the pull request when every check on the head commit passed and no `needs-review` or `needs-human` label is set. Major and SHA-only updates merge too. |
 | The caller's schedule | Sweep | Checks every open Dependabot pull request the same way. This catches a pull request whose last check came from an app. |
 | A pull request workflow fails | Triage | Reruns cancelled or flaky jobs, asks for a repair, or labels the pull request `needs-human` after two failed repairs. |
-| Triage asks for a repair | Repair, Publish | Claude makes one commit, and the guard checks it. A repair of lockfiles, package manifests, tests, snapshots or generated files is pushed by the fallow-dependabot App and merges when the checks pass. A repair of application code is not pushed: the pull request gets the `needs-review` label and a comment with the patch and the command to apply it. |
+| Triage asks for a repair | Repair, Publish | Claude makes one commit, and the guard checks it. A repair of lockfiles, package manifests, tests, snapshots or generated files is committed as a signed commit of the fallow-dependabot App and merges when the checks pass. A repair of application code is not pushed: the pull request gets the `needs-review` label and a comment with the patch and the command to apply it. |
 
 The merge does not depend on branch protection, so it also works in a
 repository without required checks. CI is the only gate for an update,
@@ -119,6 +119,16 @@ installed on every repository that calls the workflow.
   rejects changes under `.github/`, to the changelog and to git metadata
   files, binary files, symbolic links, submodules and more than 300
   hand-written lines. The push token can write contents only.
+- `publish.mjs` does not push the checked commit. It sends the same file
+  changes through the GraphQL `createCommitOnBranch` mutation, so GitHub
+  creates the commit on top of the checked head only, signs it, and names the
+  App as its author. It refuses a file mode change, because the API cannot keep
+  one, and it moves the branch back when the signed tree differs from the
+  checked tree.
+- Only signed commits from Dependabot or the App count as automation, and
+  their committer must be the author or GitHub (`identity.mjs`). Any other
+  commit, such as a repair patch that a maintainer applied, counts as a person,
+  and the automation leaves that pull request alone.
 - A repair is pushed without review only when it touches lockfiles, package
   manifests, tests, snapshots or generated files, every added manifest line
   only sets a dependency version, and no added lockfile line names a source
