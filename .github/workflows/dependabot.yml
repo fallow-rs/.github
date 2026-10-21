@@ -42,6 +42,10 @@ on:
         description: Regular expression for more manifest files, such as plugin manifests. A repair may only change version lines in them to merge without review.
         type: string
         default: ''
+      app-login:
+        description: Login of the App from DEPENDABOT_APP_CLIENT_ID. Its merge commits, which bring a branch up to date, count as automation.
+        type: string
+        default: 'fallow-dependabot[bot]'
       model:
         description: Claude model for the repair.
         type: string
@@ -66,6 +70,11 @@ env:
 jobs:
   merge:
     name: Merge
+    # One merge decision at a time per repository. The check that an edited
+    # pull request is on top of its base then sees every earlier merge.
+    concurrency:
+      group: dependabot-merge-${{ github.repository }}
+      cancel-in-progress: false
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'pull_request' &&
@@ -107,10 +116,11 @@ jobs:
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           IGNORE_CHECKS: ${{ inputs.ignore-checks }}
+          APP_LOGIN: ${{ inputs.app-login }}
         run: node dependabot/merge.mjs
 
       - id: app
-        if: steps.decide.outputs.merge == 'true' && vars.DEPENDABOT_APP_CLIENT_ID != ''
+        if: (steps.decide.outputs.merge == 'true' || steps.decide.outputs.sync == 'true') && vars.DEPENDABOT_APP_CLIENT_ID != ''
         continue-on-error: true
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
@@ -120,6 +130,21 @@ jobs:
           permission-pull-requests: write
           permission-workflows: write
 
+      # An edited branch merges only on top of the current base. The App
+      # token starts CI on the new head, and that run decides again.
+      - name: Bring the pull request up to date
+        if: steps.decide.outputs.sync == 'true'
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+          PR: ${{ steps.decide.outputs.pr }}
+          APP_LOGIN: ${{ inputs.app-login }}
+        run: |
+          if [ -z "$GITHUB_TOKEN" ]; then
+            echo "::warning::Set the DEPENDABOT_APP_CLIENT_ID variable and the DEPENDABOT_APP_PRIVATE_KEY secret to update branches."
+            exit 0
+          fi
+          node dependabot/sync.mjs
+
       # The App token, not GITHUB_TOKEN: GITHUB_TOKEN cannot merge a change to
       # a workflow file, and its push starts no workflow on the default branch.
       - name: Merge the pull request
@@ -128,10 +153,21 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           PR: ${{ steps.decide.outputs.pr }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          EDITED: ${{ steps.decide.outputs.edited }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "::warning::Set the DEPENDABOT_APP_CLIENT_ID variable and the DEPENDABOT_APP_PRIVATE_KEY secret to merge."
             exit 0
+          fi
+          # Another merge may have moved the base since the decision. An edited
+          # pull request then waits for its sync, so two repairs never both merge.
+          if [ "$EDITED" = true ]; then
+            base=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)
+            behind=$(gh api "repos/$GITHUB_REPOSITORY/compare/$base...$HEAD_SHA" --jq .behind_by)
+            if [ "$behind" != 0 ]; then
+              echo "::notice::#$PR is $behind commits behind. The sweep brings it up to date."
+              exit 0
+            fi
           fi
           if ! gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$HEAD_SHA"; then
             # The sweep or another run may have merged it first.
@@ -144,6 +180,11 @@ jobs:
   # workflow_run event.
   sweep:
     name: Sweep
+    # One merge decision at a time per repository. The check that an edited
+    # pull request is on top of its base then sees every earlier merge.
+    concurrency:
+      group: dependabot-merge-${{ github.repository }}
+      cancel-in-progress: false
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -180,10 +221,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           SWEEP: '1'
           IGNORE_CHECKS: ${{ inputs.ignore-checks }}
+          APP_LOGIN: ${{ inputs.app-login }}
         run: node dependabot/merge.mjs
 
       - id: app
-        if: steps.decide.outputs.prs != '[]' && vars.DEPENDABOT_APP_CLIENT_ID != ''
+        if: (steps.decide.outputs.prs != '[]' || steps.decide.outputs.syncs != '[]') && vars.DEPENDABOT_APP_CLIENT_ID != ''
         continue-on-error: true
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
@@ -192,6 +234,24 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
           permission-workflows: write
+
+      # An edited branch merges only on top of the current base. The App
+      # token starts CI on each new head, and that run decides again.
+      - name: Bring the edited pull requests up to date
+        if: steps.decide.outputs.syncs != '[]'
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+          SYNCS: ${{ steps.decide.outputs.syncs }}
+          APP_LOGIN: ${{ inputs.app-login }}
+        run: |
+          if [ -z "$GITHUB_TOKEN" ]; then
+            echo "::warning::Set the DEPENDABOT_APP_CLIENT_ID variable and the DEPENDABOT_APP_PRIVATE_KEY secret to update branches."
+            exit 0
+          fi
+          printf '%s' "$SYNCS" | jq -r '.[]' | while read -r number; do
+            PR="$number" node dependabot/sync.mjs \
+              || echo "::notice::#$number was not updated. The next run checks it again."
+          done
 
       # One merge at a time. A merge can put a later pull request in conflict;
       # Dependabot then rebases it, and its next run merges it.
@@ -205,10 +265,20 @@ jobs:
             echo "::warning::Set the DEPENDABOT_APP_CLIENT_ID variable and the DEPENDABOT_APP_PRIVATE_KEY secret to merge."
             exit 0
           fi
-          printf '%s' "$PRS" | jq -r '.[] | "\(.number) \(.sha)"' | while read -r number sha; do
-            gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$sha" \
-              || echo "::notice::#$number did not merge. The next run checks it again."
-          done
+          # The list puts edited pull requests first. After any merge the base
+          # has moved, so a later edited one waits for its sync.
+          merged=0
+          while read -r number sha edited; do
+            if [ "$edited" = true ] && [ "$merged" -gt 0 ]; then
+              echo "::notice::#$number is edited and the base moved. The next run brings it up to date."
+              continue
+            fi
+            if gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$sha"; then
+              merged=$((merged + 1))
+            else
+              echo "::notice::#$number did not merge. The next run checks it again."
+            fi
+          done < <(printf '%s' "$PRS" | jq -r '.[] | "\(.number) \(.sha) \(.edited)"')
 
   triage:
     name: Triage
@@ -256,7 +326,36 @@ jobs:
           LOG_FILE: ${{ runner.temp }}/failed-jobs.log
           IGNORE_JOBS: ${{ inputs.ignore-jobs }}
           FLAKY_JOBS: ${{ inputs.flaky-jobs }}
+          APP_LOGIN: ${{ inputs.app-login }}
+          # Without the App nothing can update the branch, so repair at once.
+          CHECK_BEHIND: ${{ vars.DEPENDABOT_APP_CLIENT_ID != '' }}
         run: node dependabot/triage.mjs
+
+      - id: app
+        if: steps.triage.outputs.action == 'sync' && vars.DEPENDABOT_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.DEPENDABOT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEPENDABOT_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      # A repair builds on the current base, so two repairs cannot raise the
+      # same version. The App token starts CI on the new head.
+      - name: Bring the pull request up to date
+        if: steps.triage.outputs.action == 'sync'
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+          PR: ${{ steps.triage.outputs.pr }}
+          APP_LOGIN: ${{ inputs.app-login }}
+        run: |
+          if [ -z "$GITHUB_TOKEN" ]; then
+            echo "::warning::Set the DEPENDABOT_APP_CLIENT_ID variable and the DEPENDABOT_APP_PRIVATE_KEY secret to update branches."
+            exit 0
+          fi
+          node dependabot/sync.mjs
 
       - name: Rerun the failed jobs
         if: steps.triage.outputs.action == 'rerun'
@@ -349,6 +448,8 @@ jobs:
           LOG_FILE: ${{ runner.temp }}/failed-jobs.log
           IGNORE_JOBS: ${{ inputs.ignore-jobs }}
           FLAKY_JOBS: ${{ inputs.flaky-jobs }}
+          APP_LOGIN: ${{ inputs.app-login }}
+          CHECK_BEHIND: 'false'
         run: |
           node trusted/dependabot/triage.mjs
           cp trusted/dependabot/instructions.md "$RUNNER_TEMP/instructions.md"

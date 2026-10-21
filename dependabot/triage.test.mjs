@@ -176,3 +176,39 @@ test("without options no job is ignored or treated as flaky", () => {
   const jobs = [job("VS Code Extension", "failure"), job("CI", "failure")];
   assert.deepEqual(classify(input({ jobs })).failedJobs, ["VS Code Extension", "CI"]);
 });
+
+test("a failure on a branch behind the base branch brings the branch up to date before a repair", () => {
+  assert.equal(classify(input({ behindBy: 1 }), OPTIONS).action, "sync");
+  assert.equal(classify(input({ behindBy: 0 }), OPTIONS).action, "repair");
+});
+
+test("a merge commit of the App does not count as a person", () => {
+  const commits = [dependabot, { author: "fallow-dependabot[bot]", committer: "web-flow", verified: true }];
+  const options = { ...OPTIONS, appLogin: "fallow-dependabot[bot]" };
+  assert.equal(classify(input({ commits }), options).action, "repair");
+  assert.equal(classify(input({ commits }), OPTIONS).action, "skip");
+});
+
+const APP_OPTIONS = { ...OPTIONS, appLogin: "fallow-dependabot[bot]" };
+const appMerge = { author: "fallow-dependabot[bot]", committer: "web-flow", verified: true };
+
+test("a review label stops the triage too", () => {
+  assert.equal(classify(input({ pr: pr({ labels: ["needs-review"] }) }), OPTIONS).action, "skip");
+});
+
+test("a repair commit that a person pushed counts as a person", () => {
+  const applied = { author: "claude[bot]", committer: "BartWaardenburg" };
+  assert.equal(classify(input({ commits: [dependabot, applied] }), OPTIONS).action, "skip");
+  const pushed = { author: "claude[bot]", committer: "claude[bot]" };
+  assert.equal(classify(input({ commits: [dependabot, pushed] }), OPTIONS).action, "repair");
+});
+
+test("an unsigned commit in the name of the App counts as a person", () => {
+  const forged = { author: "fallow-dependabot[bot]", committer: "web-flow", verified: false };
+  assert.equal(classify(input({ commits: [dependabot, forged] }), APP_OPTIONS).action, "skip");
+});
+
+test("a head that just merged the base is repaired, not synced again", () => {
+  const commits = [dependabot, appMerge];
+  assert.equal(classify(input({ commits, behindBy: 4 }), APP_OPTIONS).action, "repair");
+});
