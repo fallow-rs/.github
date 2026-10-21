@@ -54,24 +54,30 @@ test("a repair commit by claude[bot] keeps the merge", () => {
   assert.equal(decideMerge(input({ commits })).merge, true);
 });
 
-test("a major update or an update without metadata does not merge", () => {
+test("a major update merges when every check passed", () => {
   const major = {
     ...MINOR_COMMIT,
     message: MINOR_COMMIT.message.replace("semver-minor", "semver-major"),
   };
-  assert.match(decideMerge(input({ commits: [major] })).reason, /major/u);
-  const plain = { author: "dependabot[bot]", message: "chore(deps): bump a" };
-  assert.match(decideMerge(input({ commits: [plain] })).reason, /update type/u);
+  assert.equal(decideMerge(input({ commits: [major] })).merge, true);
 });
 
-test("a group with one major update does not merge", () => {
-  const group = {
+test("an update without an update type merges when Dependabot names the dependency", () => {
+  const sha = {
     author: "dependabot[bot]",
+    verified: true,
     message:
-      "chore(deps): bump the x group with 2 updates\n\n---\nupdated-dependencies:\n- dependency-name: a\n  update-type: version-update:semver-patch\n- dependency-name: b\n  update-type: version-update:semver-major\n...\n",
+      "chore(deps): bump x/action from abc to def\n\n---\nupdated-dependencies:\n- dependency-name: x/action\n  dependency-version: def\n  dependency-type: direct:production\n...\n",
   };
-  assert.deepEqual(updateTypes(group.message), ["patch", "major"]);
-  assert.equal(decideMerge(input({ commits: [group] })).merge, false);
+  assert.equal(decideMerge(input({ commits: [sha] })).merge, true);
+  const plain = { author: "dependabot[bot]", verified: true, message: "chore(deps): bump a" };
+  assert.match(decideMerge(input({ commits: [plain] })).reason, /metadata/u);
+});
+
+test("the update types of a group are read in order", () => {
+  const message =
+    "chore(deps): bump the x group with 2 updates\n\n---\nupdated-dependencies:\n- dependency-name: a\n  update-type: version-update:semver-patch\n- dependency-name: b\n  update-type: version-update:semver-major\n...\n";
+  assert.deepEqual(updateTypes(message), ["patch", "major"]);
 });
 
 test("no checks, a running check or a failed check stops the merge", () => {
