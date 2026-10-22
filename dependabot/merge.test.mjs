@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { decideMerge, updateTypes } from "./merge.mjs";
+import { decideMerge, squashSubject, updateTypes } from "./merge.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./merge.mjs", import.meta.url));
 const HEAD = "abc123";
@@ -213,4 +213,20 @@ test("a repair commit that a person pushed, or an unsigned App commit, holds the
   assert.match(decideMerge(input({ commits: [MINOR_COMMIT, applied] }), APP).reason, /has pushed/u);
   const forged = { ...APP_MERGE, verified: false };
   assert.match(decideMerge(input({ commits: [MINOR_COMMIT, forged] }), APP).reason, /has pushed/u);
+});
+
+test("the squash subject keeps the title and number when it fits", () => {
+  assert.equal(squashSubject("chore(deps): bump a from 1.0.0 to 1.1.0", 7), "chore(deps): bump a from 1.0.0 to 1.1.0 (#7)");
+});
+
+test("a squash subject over 100 characters drops the directory of the update", () => {
+  const title =
+    "chore(deps-dev): bump follow-redirects from 1.16.0 to 1.16.1 in /tools/type-aware-sidecar/fixtures/app";
+  assert.equal(
+    squashSubject(title, 3726),
+    "chore(deps-dev): bump follow-redirects from 1.16.0 to 1.16.1 (#3726)",
+  );
+  const long = `chore(deps): bump the ${"x".repeat(90)} group`;
+  assert.equal(squashSubject(long, 1).length, 100);
+  assert.match(squashSubject(long, 1), /\.\.\. \(#1\)$/u);
 });
