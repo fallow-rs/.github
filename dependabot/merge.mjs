@@ -58,6 +58,12 @@ const API = "https://api.github.com";
 const MAX_SUBJECT = 100;
 // The directory that Dependabot appends to a title, such as " in /editors/vscode".
 const UPDATE_DIRECTORY = / in \/\S*$/u;
+// Built from code points, so the source holds no control character. A title
+// is text from the pull request, and the merge step reads tab-separated fields.
+const CONTROL_CHARACTERS = new RegExp(
+  `[${String.fromCharCode(0)}-${String.fromCharCode(0x1f)}${String.fromCharCode(0x7f)}]+`,
+  "gu",
+);
 const REQUIRED_ENV = ["GITHUB_TOKEN", "GITHUB_REPOSITORY", "GITHUB_OUTPUT"];
 const RUN_ENV = ["HEAD_BRANCH", "RUN_HEAD_SHA"];
 
@@ -162,7 +168,8 @@ const githubJson = async (path, token) => {
  * @param {number} number
  * @returns {string}
  */
-export const squashSubject = (title, number) => {
+export const squashSubject = (rawTitle, number) => {
+  const title = rawTitle.replace(CONTROL_CHARACTERS, " ").replace(/ {2,}/gu, " ").trim();
   const suffix = ` (#${number})`;
   const fits = (text) => text.length + suffix.length <= MAX_SUBJECT;
   if (fits(title)) return `${title}${suffix}`;

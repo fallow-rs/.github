@@ -270,6 +270,11 @@ jobs:
           # has moved, so a later edited one waits for its sync.
           merged=0
           while IFS=$'\t' read -r number sha edited subject; do
+            # The fields come from the API. Check their shape before a merge.
+            if ! [[ "$number" =~ ^[0-9]+$ && "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::warning::Skipped an entry with an unexpected number or commit."
+              continue
+            fi
             if [ "$edited" = true ] && [ "$merged" -gt 0 ]; then
               echo "::notice::#$number is edited and the base moved. The next run brings it up to date."
               continue

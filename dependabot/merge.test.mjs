@@ -230,3 +230,10 @@ test("a squash subject over 100 characters drops the directory of the update", (
   assert.equal(squashSubject(long, 1).length, 100);
   assert.match(squashSubject(long, 1), /\.\.\. \(#1\)$/u);
 });
+
+test("the squash subject holds no control character, so it stays one field", () => {
+  const title = "chore(deps): bump a\tfrom 1.0.0\nto 1.1.0\u0000";
+  const subject = squashSubject(title, 9);
+  assert.equal(subject, "chore(deps): bump a from 1.0.0 to 1.1.0 (#9)");
+  assert.doesNotMatch(subject, /[\u0000-\u001f\u007f]/u);
+});
