@@ -33,6 +33,11 @@ with a repair or a merge of the base) merges only on top of it:
   keeps one pending job per group, so a merge job can be dropped; the next
   sweep then merges that pull request.
 - A pull request that only Dependabot changed keeps the behavior of Dependabot.
+- The merge jobs pass the squash subject themselves: the title and the number
+  in at most 100 characters, without control characters. A long Dependabot
+  title drops its update directory first. A repository whose commit or title
+  lint runs on pull requests should skip bot pull requests, because their
+  commit headers and titles never reach the default branch.
 
 A conflict reset drops the repair commits, so their count starts again. Each
 reset needs a conflicting change on the default branch, which limits how often
