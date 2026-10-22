@@ -54,6 +54,10 @@ const PASSED = new Set(["success", "neutral", "skipped"]);
 const DEPENDENCY_METADATA = /^updated-dependencies:\n- dependency-name: \S/mu;
 const UPDATE_TYPE = /update-type: version-update:semver-(major|minor|patch)/gu;
 const API = "https://api.github.com";
+// Commit message linters allow 100 characters in a header.
+const MAX_SUBJECT = 100;
+// The directory that Dependabot appends to a title, such as " in /editors/vscode".
+const UPDATE_DIRECTORY = / in \/\S*$/u;
 const REQUIRED_ENV = ["GITHUB_TOKEN", "GITHUB_REPOSITORY", "GITHUB_OUTPUT"];
 const RUN_ENV = ["HEAD_BRANCH", "RUN_HEAD_SHA"];
 
@@ -151,11 +155,28 @@ const githubJson = async (path, token) => {
   return response.json();
 };
 
+/**
+ * The subject of the squash commit: the title and the number, in at most 100
+ * characters. A long Dependabot title loses its directory first, then its end.
+ * @param {string} title
+ * @param {number} number
+ * @returns {string}
+ */
+export const squashSubject = (title, number) => {
+  const suffix = ` (#${number})`;
+  const fits = (text) => text.length + suffix.length <= MAX_SUBJECT;
+  if (fits(title)) return `${title}${suffix}`;
+  const short = title.replace(UPDATE_DIRECTORY, "");
+  if (fits(short)) return `${short}${suffix}`;
+  return `${short.slice(0, MAX_SUBJECT - suffix.length - 4).trimEnd()} ...${suffix}`;
+};
+
 const toPullRequest = (pull) => ({
   number: pull.number,
   headSha: pull.head.sha,
   headBranch: pull.head.ref,
   baseRef: pull.base.ref,
+  title: pull.title,
   labels: pull.labels.map((item) => item.name),
   mergeableState: pull.mergeable_state,
 });
@@ -241,6 +262,7 @@ const runOne = async (env, options) => {
     merge: decision.merge,
     sync: decision.sync,
     edited: decision.edited ?? false,
+    subject: pr ? squashSubject(pr.title, pr.number) : "",
     pr: pr?.number ?? "",
     reason: decision.reason,
   });
@@ -257,7 +279,12 @@ const sweep = async (env, options) => {
     const verb = decision.merge ? "merge" : decision.sync ? "sync" : "hold";
     console.log(`#${pr.number} ${verb}: ${decision.reason}`);
     if (decision.merge) {
-      ready.push({ number: pr.number, sha: pr.headSha, edited: decision.edited });
+      ready.push({
+        number: pr.number,
+        sha: pr.headSha,
+        edited: decision.edited,
+        subject: squashSubject(pr.title, pr.number),
+      });
     }
     if (decision.sync) syncs.push(pr.number);
   }

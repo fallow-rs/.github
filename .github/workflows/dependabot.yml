@@ -154,6 +154,7 @@ jobs:
           PR: ${{ steps.decide.outputs.pr }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           EDITED: ${{ steps.decide.outputs.edited }}
+          SUBJECT: ${{ steps.decide.outputs.subject }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "::warning::Set the DEPENDABOT_APP_CLIENT_ID variable and the DEPENDABOT_APP_PRIVATE_KEY secret to merge."
@@ -169,7 +170,7 @@ jobs:
               exit 0
             fi
           fi
-          if ! gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$HEAD_SHA"; then
+          if ! gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$HEAD_SHA" --subject "$SUBJECT"; then
             # The sweep or another run may have merged it first.
             state=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json state --jq .state)
             [ "$state" = MERGED ] || exit 1
@@ -268,17 +269,17 @@ jobs:
           # The list puts edited pull requests first. After any merge the base
           # has moved, so a later edited one waits for its sync.
           merged=0
-          while read -r number sha edited; do
+          while IFS=$'\t' read -r number sha edited subject; do
             if [ "$edited" = true ] && [ "$merged" -gt 0 ]; then
               echo "::notice::#$number is edited and the base moved. The next run brings it up to date."
               continue
             fi
-            if gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$sha"; then
+            if gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$sha" --subject "$subject"; then
               merged=$((merged + 1))
             else
               echo "::notice::#$number did not merge. The next run checks it again."
             fi
-          done < <(printf '%s' "$PRS" | jq -r '.[] | "\(.number) \(.sha) \(.edited)"')
+          done < <(printf '%s' "$PRS" | jq -r '.[] | "\(.number)\t\(.sha)\t\(.edited)\t\(.subject)"')
 
   triage:
     name: Triage
