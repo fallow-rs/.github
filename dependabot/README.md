@@ -115,6 +115,8 @@ installed on every repository that calls the workflow.
 ## Security
 
 - The workflow runs only for `dependabot/**` branches in the same repository.
+- Claude accepts bot actors from Dependabot and the configured `app-login`.
+  This includes CI runs started by the App after a repair or a base sync.
 - The scripts and the instructions come from this workflow's own commit
   (`job.workflow_sha`), and the repository notes from the default branch.
 - The repair job installs and builds third-party code, so it holds only a
