@@ -24,3 +24,7 @@ jobs:
           node-version: '26'
 
       - run: node --test dependabot/*.test.mjs
+
+      - run: node --test scripts/*.test.mjs
+
+      - run: node scripts/check-comment-quality.mjs --all
