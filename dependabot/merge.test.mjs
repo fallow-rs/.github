@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { decideMerge, squashSubject, updateTypes } from "./merge.mjs";
+import { decideMerge, shortTitle, squashSubject, updateTypes } from "./merge.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./merge.mjs", import.meta.url));
 const HEAD = "abc123";
@@ -229,6 +229,21 @@ test("a squash subject over 100 characters drops the directory of the update", (
   const long = `chore(deps): bump the ${"x".repeat(90)} group`;
   assert.equal(squashSubject(long, 1).length, 100);
   assert.match(squashSubject(long, 1), /\.\.\. \(#1\)$/u);
+});
+
+test("a title that fits a squash subject keeps its text", () => {
+  assert.equal(shortTitle("chore(deps): bump a from 1.0.0 to 1.1.0", 7), null);
+  const exact = `chore(deps): bump ${"x".repeat(100 - 18 - 8)}`;
+  assert.equal(shortTitle(exact, 4685), null);
+});
+
+test("a long title gets the squash subject without its number", () => {
+  const title =
+    "chore(deps): bump oxc-coverage-instrument from 0.19.0 to 0.20.0 in /tests/coverage-producer-corpus/producers";
+  const short = shortTitle(title, 4685);
+  assert.equal(short, "chore(deps): bump oxc-coverage-instrument from 0.19.0 to 0.20.0");
+  assert.ok(`${short} (#4685)`.length <= 100);
+  assert.equal(shortTitle(short, 4685), null);
 });
 
 test("the squash subject holds no control character, so it stays one field", () => {
