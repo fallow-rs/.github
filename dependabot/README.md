@@ -40,7 +40,9 @@ with a repair or a merge of the base) merges only on top of it:
   merge by hand in the GitHub UI uses the title as the subject, so commit lint
   on the default branch stays green. A repository whose commit or title lint
   runs on pull requests should skip bot pull requests, because their commit
-  headers do not reach the default branch.
+  headers do not reach the default branch. Skip them by the author of the pull
+  request (`github.event.pull_request.user.type != 'Bot'`), not by the actor:
+  the App edits the title, so the `edited` run has the App as its actor.
 
 A conflict reset drops the repair commits, so their count starts again. Each
 reset needs a conflicting change on the default branch, which limits how often

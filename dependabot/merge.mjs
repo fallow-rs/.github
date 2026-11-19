@@ -189,7 +189,8 @@ export const squashSubject = (rawTitle, number) => {
 export const shortTitle = (title, number) => {
   const suffix = ` (#${number})`;
   if (title.length + suffix.length <= MAX_SUBJECT) return null;
-  return squashSubject(title, number).slice(0, -suffix.length);
+  const short = squashSubject(title, number).slice(0, -suffix.length).trim();
+  return short === "" ? null : short;
 };
 
 const toPullRequest = (pull) => ({
@@ -298,7 +299,7 @@ const sweep = async (env, options) => {
   for (const match of await openDependabotPulls(repo, query, env.GITHUB_TOKEN)) {
     const pr = await readPullRequest(repo, match.number, env.GITHUB_TOKEN);
     const title = shortTitle(pr.title, pr.number);
-    if (title !== null) retitles.push({ number: pr.number, title });
+    if (title !== null) retitles.push({ number: pr.number, title, from: pr.title });
     const decision = await decideFor(repo, pr, pr.headSha, env.GITHUB_TOKEN, options);
     const verb = decision.merge ? "merge" : decision.sync ? "sync" : "hold";
     console.log(`#${pr.number} ${verb}: ${decision.reason}`);

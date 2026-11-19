@@ -248,14 +248,25 @@ jobs:
             echo "::warning::Set the DEPENDABOT_APP_CLIENT_ID variable and the DEPENDABOT_APP_PRIVATE_KEY secret to shorten titles."
             exit 0
           fi
-          while IFS=$'\t' read -r number title; do
+          count=$(printf '%s' "$RETITLES" | jq 'length')
+          for ((i = 0; i < count; i++)); do
+            number=$(printf '%s' "$RETITLES" | jq -r ".[$i].number")
+            title=$(printf '%s' "$RETITLES" | jq -r ".[$i].title")
+            from=$(printf '%s' "$RETITLES" | jq -r ".[$i].from")
             if ! [[ "$number" =~ ^[0-9]+$ ]]; then
               echo "::warning::Skipped an entry with an unexpected number."
               continue
             fi
+            # Dependabot sets a new title when it updates the pull request. An
+            # edit from the old title would name the old version.
+            current=$(gh pr view "$number" --repo "$GITHUB_REPOSITORY" --json title --jq .title) || continue
+            if [ "$current" != "$from" ]; then
+              echo "::notice::The title of #$number changed. The next run checks it again."
+              continue
+            fi
             gh pr edit "$number" --repo "$GITHUB_REPOSITORY" --title "$title" \
               || echo "::notice::The title of #$number did not change. The next run tries again."
-          done < <(printf '%s' "$RETITLES" | jq -r '.[] | "\(.number)\t\(.title)"')
+          done
 
       # An edited branch merges only on top of the current base. The App
       # token starts CI on each new head, and that run decides again.

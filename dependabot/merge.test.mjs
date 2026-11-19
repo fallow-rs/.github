@@ -246,6 +246,10 @@ test("a long title gets the squash subject without its number", () => {
   assert.equal(shortTitle(short, 4685), null);
 });
 
+test("a long title of only blank and control characters gets no short title", () => {
+  assert.equal(shortTitle(" \t".repeat(60), 1), null);
+});
+
 test("the squash subject holds no control character, so it stays one field", () => {
   const title = "chore(deps): bump a\tfrom 1.0.0\nto 1.1.0\u0000";
   const subject = squashSubject(title, 9);
