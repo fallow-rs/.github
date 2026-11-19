@@ -178,6 +178,21 @@ export const squashSubject = (rawTitle, number) => {
   return `${short.slice(0, MAX_SUBJECT - suffix.length - 4).trimEnd()} ...${suffix}`;
 };
 
+/**
+ * A shorter title for a pull request whose title and number do not fit in a
+ * squash subject, or null when they fit. A person who merges in the GitHub
+ * UI gets the title as the subject, and commit lint rejects a long one.
+ * @param {string} title
+ * @param {number} number
+ * @returns {string | null}
+ */
+export const shortTitle = (title, number) => {
+  const suffix = ` (#${number})`;
+  if (title.length + suffix.length <= MAX_SUBJECT) return null;
+  const short = squashSubject(title, number).slice(0, -suffix.length).trim();
+  return short === "" ? null : short;
+};
+
 const toPullRequest = (pull) => ({
   number: pull.number,
   headSha: pull.head.sha,
@@ -280,8 +295,11 @@ const sweep = async (env, options) => {
   const query = new URLSearchParams({ state: "open", per_page: "100" });
   const ready = [];
   const syncs = [];
+  const retitles = [];
   for (const match of await openDependabotPulls(repo, query, env.GITHUB_TOKEN)) {
     const pr = await readPullRequest(repo, match.number, env.GITHUB_TOKEN);
+    const title = shortTitle(pr.title, pr.number);
+    if (title !== null) retitles.push({ number: pr.number, title, from: pr.title });
     const decision = await decideFor(repo, pr, pr.headSha, env.GITHUB_TOKEN, options);
     const verb = decision.merge ? "merge" : decision.sync ? "sync" : "hold";
     console.log(`#${pr.number} ${verb}: ${decision.reason}`);
@@ -298,7 +316,11 @@ const sweep = async (env, options) => {
   // An edited pull request must be on top of the current base. Every merge
   // moves the base, so an edited one goes first, and only as the first merge.
   ready.sort((a, b) => Number(b.edited) - Number(a.edited));
-  writeOutputs(env.GITHUB_OUTPUT, { prs: JSON.stringify(ready), syncs: JSON.stringify(syncs) });
+  writeOutputs(env.GITHUB_OUTPUT, {
+    prs: JSON.stringify(ready),
+    syncs: JSON.stringify(syncs),
+    retitles: JSON.stringify(retitles),
+  });
 };
 
 const main = async () => {
