@@ -14,7 +14,10 @@
 // - when it has a commit besides Dependabot's (a repair or a merge of the
 //   base), it is up to date with its base branch. Two repairs can raise the
 //   same version or build the same output, so such an edited pull request
-//   merges only on top of the current base.
+//   merges only on top of the current base,
+// - it is not a major update. A major update that passes every other
+//   condition gets `handoff` instead: the workflow labels it `needs-review`
+//   for a maintainer.
 //
 // An edited pull request that is behind or in conflict gets `sync`: sync.mjs
 // brings it up to date, and the run on the new head decides again. Dependabot
@@ -26,13 +29,14 @@
 // IGNORE_CHECKS is an optional regular expression on check names, for a check
 // that fails without a code cause, such as a benchmark comparison.
 //
-// The CLI writes `merge` and `sync` (true or false), `pr` and `reason` to
-// GITHUB_OUTPUT. With SWEEP=1 it checks every open Dependabot pull request
-// instead, and writes `prs`: a JSON list of { number, sha } to merge, and
-// `syncs`: a JSON list of pull request numbers to bring up to date. A merge
-// moves the base, so the sweep merges an edited pull request only as the first
-// merge of the run. The sweep catches a pull
-// request whose last check came from an app, not from a workflow run.
+// The CLI writes `merge` and `sync` (true or false), `pr`, `reason` and
+// `handoffs` to GITHUB_OUTPUT. With SWEEP=1 it checks every open Dependabot
+// pull request instead, and writes `prs`: a JSON list of { number, sha } to
+// merge, and `syncs`: a JSON list of pull request numbers to bring up to date.
+// In both modes `handoffs` is a JSON list of { number, reason } for the major
+// updates. A merge moves the base, so the sweep merges an edited pull request
+// only as the first merge of the run. The sweep catches a pull request whose
+// last check came from an app, not from a workflow run.
 //
 // Run: GITHUB_TOKEN=... GITHUB_REPOSITORY=owner/repo HEAD_BRANCH=dependabot/... \
 //   RUN_HEAD_SHA=... node dependabot/merge.mjs
@@ -53,6 +57,12 @@ const CHECKED_EVENTS = new Set(["pull_request", "push"]);
 const PASSED = new Set(["success", "neutral", "skipped"]);
 const DEPENDENCY_METADATA = /^updated-dependencies:\n- dependency-name: \S/mu;
 const UPDATE_TYPE = /update-type: version-update:semver-(major|minor|patch)/gu;
+// The lines where Dependabot names the versions: the headline, "Bumps [a](...)
+// from 1.0.0 to 2.0.0." and "Updates `a` from 1.0.0 to 2.0.0" of a group.
+// Quoted release notes and commit lists start with other text, so they do not
+// count. A version must start with a number, so a commit SHA such as 11bd719
+// does not count either.
+const VERSION_LINE = /^(?:\S+: bump |Bumps? |Updates )[^\n]*?\bfrom v?(\d+)(?!\w)\S* to v?(\d+)(?!\w)/gmu;
 const API = "https://api.github.com";
 // Commit message linters allow 100 characters in a header.
 const MAX_SUBJECT = 100;
@@ -77,6 +87,19 @@ export const updateTypes = (message) =>
   Array.from(message.matchAll(UPDATE_TYPE), (match) => match[1]);
 
 /**
+ * Tells if a Dependabot commit message describes a major update: its metadata
+ * says semver-major, or a version line raises the first version number. The
+ * metadata of a grouped or security update can lack the update type.
+ * @param {string} message
+ * @returns {boolean}
+ */
+export const isMajorUpdate = (message) =>
+  updateTypes(message).includes("major") ||
+  Array.from(message.matchAll(VERSION_LINE)).some(
+    ([, from, to]) => Number(from) !== Number(to),
+  );
+
+/**
  * @param {{
  *   pr: { number: number, headSha: string, labels: string[], mergeableState: string } | null,
  *   runHeadSha: string,
@@ -87,7 +110,7 @@ export const updateTypes = (message) =>
  *   complete?: boolean,
  * }} input
  * @param {{ ignoreCheck?: RegExp, appLogin?: string }} [options]
- * @returns {{ merge: boolean, reason: string, sync: boolean, edited?: boolean }}
+ * @returns {{ merge: boolean, reason: string, sync: boolean, edited?: boolean, handoff?: boolean }}
  */
 export const decideMerge = (
   {
@@ -117,8 +140,8 @@ export const decideMerge = (
   const person = commits.find((commit) => !isAutomationCommit(commit, appLogin));
   if (person) return hold(`${person.author ?? "an unknown author"} has pushed to this branch`);
 
-  // Every update merges when CI passes, majors included. A SHA-only update has
-  // no update type, so the metadata block itself is the requirement.
+  // A SHA-only update has no update type, so the metadata block itself is the
+  // requirement.
   const described = commits.some(
     (commit) => commit.author === DEPENDABOT && DEPENDENCY_METADATA.test(commit.message),
   );
@@ -146,6 +169,12 @@ export const decideMerge = (
   }
 
   if (pr.mergeableState === "dirty") return hold("the pull request has a merge conflict");
+  const major = commits.some(
+    (commit) => commit.author === DEPENDABOT && isMajorUpdate(commit.message),
+  );
+  if (major) {
+    return { merge: false, reason: "a major update needs a maintainer", sync: false, handoff: true };
+  }
   return { merge: true, reason: "every check passed", sync: false, edited };
 };
 
@@ -263,6 +292,12 @@ const decideFor = async (repo, pr, sha, token, options) => {
   );
 };
 
+const verbOf = (decision) => {
+  if (decision.merge) return "merge";
+  if (decision.sync) return "sync";
+  return decision.handoff ? "handoff" : "hold";
+};
+
 const oneLine = (value) => String(value).replace(/[\r\n]+/gu, " ");
 
 const writeOutputs = (file, outputs) => {
@@ -279,7 +314,7 @@ const runOne = async (env, options) => {
   const [match] = await openDependabotPulls(repo, query, env.GITHUB_TOKEN);
   const pr = match ? await readPullRequest(repo, match.number, env.GITHUB_TOKEN) : null;
   const decision = await decideFor(repo, pr, env.RUN_HEAD_SHA, env.GITHUB_TOKEN, options);
-  console.log(`${decision.merge ? "merge" : decision.sync ? "sync" : "hold"}: ${decision.reason}`);
+  console.log(`${verbOf(decision)}: ${decision.reason}`);
   writeOutputs(env.GITHUB_OUTPUT, {
     merge: decision.merge,
     sync: decision.sync,
@@ -287,6 +322,9 @@ const runOne = async (env, options) => {
     subject: pr ? squashSubject(pr.title, pr.number) : "",
     pr: pr?.number ?? "",
     reason: decision.reason,
+    handoffs: JSON.stringify(
+      decision.handoff ? [{ number: pr.number, reason: decision.reason }] : [],
+    ),
   });
 };
 
@@ -296,13 +334,13 @@ const sweep = async (env, options) => {
   const ready = [];
   const syncs = [];
   const retitles = [];
+  const handoffs = [];
   for (const match of await openDependabotPulls(repo, query, env.GITHUB_TOKEN)) {
     const pr = await readPullRequest(repo, match.number, env.GITHUB_TOKEN);
     const title = shortTitle(pr.title, pr.number);
     if (title !== null) retitles.push({ number: pr.number, title, from: pr.title });
     const decision = await decideFor(repo, pr, pr.headSha, env.GITHUB_TOKEN, options);
-    const verb = decision.merge ? "merge" : decision.sync ? "sync" : "hold";
-    console.log(`#${pr.number} ${verb}: ${decision.reason}`);
+    console.log(`#${pr.number} ${verbOf(decision)}: ${decision.reason}`);
     if (decision.merge) {
       ready.push({
         number: pr.number,
@@ -312,6 +350,7 @@ const sweep = async (env, options) => {
       });
     }
     if (decision.sync) syncs.push(pr.number);
+    if (decision.handoff) handoffs.push({ number: pr.number, reason: decision.reason });
   }
   // An edited pull request must be on top of the current base. Every merge
   // moves the base, so an edited one goes first, and only as the first merge.
@@ -320,6 +359,7 @@ const sweep = async (env, options) => {
     prs: JSON.stringify(ready),
     syncs: JSON.stringify(syncs),
     retitles: JSON.stringify(retitles),
+    handoffs: JSON.stringify(handoffs),
   });
 };
 
