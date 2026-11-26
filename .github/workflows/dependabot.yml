@@ -6,7 +6,9 @@ name: Dependabot
 # dependabot/README.md for the caller and the setup.
 #
 # - merge: after a successful run, merge the pull request when every check on
-#   the head commit passed and the update is a minor or patch update.
+#   the head commit passed and the update is not a major update.
+# - handoff: label a major update `needs-review` and add a comment, so a
+#   maintainer merges it.
 # - triage: after a failed run, rerun it, ask for a repair, or hand the pull
 #   request to a maintainer.
 # - repair: Claude makes one local commit. This job installs and builds the
@@ -90,6 +92,8 @@ jobs:
       contents: read
       pull-requests: read
       statuses: read
+    outputs:
+      handoffs: ${{ steps.decide.outputs.handoffs }}
     steps:
       # job.workflow_sha selects this workflow's own scripts. Stop when it is
       # empty, so a caller's own files never run in its place.
@@ -197,6 +201,8 @@ jobs:
       contents: read
       pull-requests: read
       statuses: read
+    outputs:
+      handoffs: ${{ steps.decide.outputs.handoffs }}
     steps:
       # job.workflow_sha selects this workflow's own scripts. Stop when it is
       # empty, so a caller's own files never run in its place.
@@ -317,6 +323,52 @@ jobs:
               echo "::notice::#$number did not merge. The next run checks it again."
             fi
           done < <(printf '%s' "$PRS" | jq -r '.[] | "\(.number)\t\(.sha)\t\(.edited)\t\(.subject)"')
+
+  # A major update can need a migration, so a maintainer merges it. The merge
+  # and sweep jobs only read, and this job writes the label and the comment.
+  # It runs no code from a repository.
+  handoff:
+    name: Hand off
+    needs: [merge, sweep]
+    if: >-
+      always() &&
+      ((needs.merge.result == 'success' && needs.merge.outputs.handoffs != '' && needs.merge.outputs.handoffs != '[]') ||
+      (needs.sweep.result == 'success' && needs.sweep.outputs.handoffs != '' && needs.sweep.outputs.handoffs != '[]'))
+    # One hand-off at a time, so two runs never add two comments.
+    concurrency:
+      group: dependabot-handoff-${{ github.repository }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Hand the major updates to a maintainer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HANDOFFS: ${{ needs.merge.outputs.handoffs || needs.sweep.outputs.handoffs }}
+        run: |
+          set -euo pipefail
+          gh label create needs-review --repo "$GITHUB_REPOSITORY" --color FBCA04 \
+            --description "A maintainer must review this pull request" 2>/dev/null || true
+          comment="$RUNNER_TEMP/comment.md"
+          echo "This is a major update, so the Dependabot workflow does not merge it. Every check passed. A maintainer reviews the update and merges it." > "$comment"
+          printf '%s' "$HANDOFFS" | jq -r '.[].number' | while read -r number; do
+            # The number comes from the API. Check its shape before use.
+            if ! [[ "$number" =~ ^[0-9]+$ ]]; then
+              echo "::warning::Skipped an entry with an unexpected number."
+              continue
+            fi
+            labels=$(gh pr view "$number" --repo "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name] | join(",")')
+            case ",$labels," in
+              *,needs-review,*|*,needs-human,*) continue ;;
+            esac
+            # GitHub auto-merge would ignore the label, so it is turned off.
+            gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --disable-auto 2>/dev/null || true
+            gh pr edit "$number" --repo "$GITHUB_REPOSITORY" --add-label needs-review
+            gh pr comment "$number" --repo "$GITHUB_REPOSITORY" --body-file "$comment"
+          done
 
   triage:
     name: Triage
@@ -731,7 +783,7 @@ jobs:
           case "$CHECK/$MODE/$RESULT" in
             accepted/auto/pushed)
               label=""
-              echo "The repair workflow pushed a commit that changes only generated files. The pull request merges when every check passes." > "$comment" ;;
+              echo "The repair workflow pushed a commit that changes only generated files. When every check passes, the pull request merges, or goes to a maintainer if it is a major update." > "$comment" ;;
             accepted/review/*)
               label=""
               patch="$RUNNER_TEMP/repair/repair.patch"

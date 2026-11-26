@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { decideMerge, shortTitle, squashSubject, updateTypes } from "./merge.mjs";
+import { decideMerge, isMajorUpdate, shortTitle, squashSubject, updateTypes } from "./merge.mjs";
 
 const SCRIPT_PATH = fileURLToPath(new URL("./merge.mjs", import.meta.url));
 const HEAD = "abc123";
@@ -61,12 +61,59 @@ test("a signed repair commit of the App keeps the merge, an unsigned claude[bot]
   assert.match(decideMerge(input({ commits: [MINOR_COMMIT, unsigned] })).reason, /claude\[bot\] has pushed/u);
 });
 
-test("a major update merges when every check passed", () => {
+test("a major update with every check passed goes to a maintainer instead of a merge", () => {
   const major = {
     ...MINOR_COMMIT,
     message: MINOR_COMMIT.message.replace("semver-minor", "semver-major"),
   };
-  assert.equal(decideMerge(input({ commits: [major] })).merge, true);
+  const result = decideMerge(input({ commits: [major] }));
+  assert.deepEqual([result.merge, result.sync, result.handoff], [false, false, true]);
+  assert.match(result.reason, /major/u);
+});
+
+test("a major update without an update type goes to a maintainer", () => {
+  // A security update in a group has no update-type in its metadata. The
+  // versions are only in the "Updates" line of the commit message.
+  const security = {
+    author: "dependabot[bot]",
+    verified: true,
+    message:
+      "chore(deps-dev): bump vitest\n\nBumps the npm_and_yarn group with 1 update in the /files directory: [vitest](https://github.com/vitest-dev/vitest).\nUpdates `vitest` from 3.2.7 to 5.1.2\n- [Release notes](https://github.com/vitest-dev/vitest/releases)\n\n---\nupdated-dependencies:\n- dependency-name: vitest\n  dependency-version: 5.1.2\n  dependency-type: direct:development\n  dependency-group: npm_and_yarn\n...\n",
+  };
+  assert.equal(decideMerge(input({ commits: [security] })).handoff, true);
+  const headline = {
+    author: "dependabot[bot]",
+    verified: true,
+    message:
+      "chore(deps): bump actions/checkout from 4 to 5\n\n---\nupdated-dependencies:\n- dependency-name: actions/checkout\n  dependency-version: '5'\n...\n",
+  };
+  assert.equal(decideMerge(input({ commits: [headline] })).handoff, true);
+});
+
+test("a major update that is not ready yet holds without a handoff", () => {
+  const major = {
+    ...MINOR_COMMIT,
+    message: MINOR_COMMIT.message.replace("semver-minor", "semver-major"),
+  };
+  const running = [{ name: "Test", status: "in_progress", conclusion: null }];
+  const result = decideMerge(input({ commits: [major], checkRuns: running }));
+  assert.deepEqual([result.merge, result.handoff], [false, undefined]);
+  const pr = { number: 7, headSha: HEAD, labels: ["needs-review"], mergeableState: "clean" };
+  assert.equal(decideMerge(input({ pr, commits: [major] })).handoff, undefined);
+});
+
+test("only the first version number makes an update major", () => {
+  assert.equal(isMajorUpdate("chore(deps): bump a from 1.2.0 to 1.3.0"), false);
+  assert.equal(isMajorUpdate("chore(deps): bump a from 0.19.0 to 0.20.0"), false);
+  assert.equal(isMajorUpdate("chore(deps): bump a from v1.9.0 to v2.0.0"), true);
+  assert.equal(isMajorUpdate("Bump a from 1.9.0 to 2.0.0"), true);
+  assert.equal(isMajorUpdate("chore(deps): bump x/action from 11bd719 to 3d3c42e"), false);
+  // Quoted release notes can name other versions. Only the headline and the
+  // "Updates" lines count.
+  assert.equal(
+    isMajorUpdate("chore(deps): bump a from 1.2.0 to 1.3.0\n\n> Bump b from 1.0.0 to 2.0.0\n"),
+    false,
+  );
 });
 
 test("an update without an update type merges when Dependabot names the dependency", () => {

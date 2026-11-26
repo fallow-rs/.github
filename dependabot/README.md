@@ -8,14 +8,22 @@ maintainer in most cases.
 
 | Event | Job | Result |
 | --- | --- | --- |
-| A pull request workflow succeeds | Merge | Merges the pull request when every check on the head commit passed and no `needs-review` or `needs-human` label is set. Major and SHA-only updates merge too. |
+| A pull request workflow succeeds | Merge | Merges the pull request when every check on the head commit passed and no `needs-review` or `needs-human` label is set. SHA-only updates merge too. |
+| Merge or Sweep finds a major update | Hand off | A major update does not merge. When every check passed, the pull request gets the `needs-review` label and a comment, and a maintainer merges it. |
 | The caller's schedule | Sweep | Checks every open Dependabot pull request the same way. This catches a pull request whose last check came from an app. |
 | A pull request workflow fails | Triage | Reruns cancelled or flaky jobs, asks for a repair, or labels the pull request `needs-human` after two failed repairs. |
 | Triage asks for a repair | Repair, Publish | Claude makes one commit, and the guard checks it. A repair of lockfiles, package manifests, tests, snapshots or generated files is committed as a signed commit of the fallow-dependabot App and merges when the checks pass. A repair of application code is not pushed: the pull request gets the `needs-review` label and a comment with the patch and the command to apply it. |
 
 The merge does not depend on branch protection, so it also works in a
-repository without required checks. CI is the only gate for an update,
-majors included.
+repository without required checks. CI is the gate for a minor, patch or
+SHA-only update. A major update also needs a maintainer, in every directory of
+the repository, test fixtures included.
+
+An update is major when the Dependabot metadata says `semver-major`, or when
+the commit message raises the first version number, as in `from 3.2.7 to
+5.1.2`. A grouped or security update can lack the update type in its
+metadata, so the version lines count too. A raise from 0.19 to 0.20 is not
+major.
 
 A repair builds on the current default branch, and an edited pull request (one
 with a repair or a merge of the base) merges only on top of it:

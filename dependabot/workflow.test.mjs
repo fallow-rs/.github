@@ -43,3 +43,25 @@ test("Claude follows the caller's repair App without admitting unrelated bots", 
   assert.equal(allowsActor("fallow-dependabot[bot]", appLogin), false);
   assert.equal(allowsActor("unrelated-app[bot]", appLogin), false);
 });
+
+const jobBlock = (name) => {
+  const start = workflow.indexOf(`\n  ${name}:\n`);
+  assert.notEqual(start, -1, `the workflow has a ${name} job`);
+  const next = workflow.slice(start + 1).search(/\n  [a-z-]+:\n/u);
+  return next === -1 ? workflow.slice(start) : workflow.slice(start, start + 1 + next);
+};
+
+test("the merge and sweep jobs pass their major updates to the handoff job", () => {
+  for (const name of ["merge", "sweep"]) {
+    const job = jobBlock(name);
+    assert.match(job, /handoffs: \$\{\{ steps\.decide\.outputs\.handoffs \}\}/u, name);
+    assert.match(job, /pull-requests: read/u, name);
+    assert.doesNotMatch(job, /\n      [a-z-]+: write\n/u, `${name} holds no write permission of GITHUB_TOKEN`);
+  }
+  const handoff = jobBlock("handoff");
+  assert.match(handoff, /needs: \[merge, sweep\]/u);
+  assert.match(handoff, /needs\.merge\.outputs\.handoffs != '\[\]'/u);
+  assert.match(handoff, /needs\.sweep\.outputs\.handoffs != '\[\]'/u);
+  assert.match(handoff, /--add-label needs-review/u);
+  assert.doesNotMatch(handoff, /actions\/checkout/u, "the handoff job runs no repository code");
+});
